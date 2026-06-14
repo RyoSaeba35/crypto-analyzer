@@ -8,6 +8,7 @@
 // a cheap incremental top-up. Data is trimmed to 90 days.
 
 import pool from '@/lib/db'
+import { NextRequest } from 'next/server'
 import {
   fetchTopCoins, fetchCandles, fetchCandlesGate, fetchCandlesKucoin
 } from '@/lib/exchanges'
@@ -19,7 +20,13 @@ import {
   INTERVAL_GROUPS
 } from '@/lib/analysis'
 
-export async function GET() {
+export async function GET(request: NextRequest) {
+  // ── Auth check ──────────────────────────────────────────
+  const secret = request.nextUrl.searchParams.get('secret')
+  if (secret !== process.env.CRON_SECRET) {
+    return Response.json({ success: false, error: 'Unauthorized' }, { status: 401 })
+  }
+  
   try {
     console.log('Daily cron job started...')
 
