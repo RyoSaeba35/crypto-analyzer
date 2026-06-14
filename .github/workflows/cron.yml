@@ -1,0 +1,14 @@
+name: Daily OHLCV cron
+
+on:
+  schedule:
+    - cron: '0 2 * * *'  # 2:00 AM UTC daily
+  workflow_dispatch: {}
+
+jobs:
+  call-cron:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Call cron endpoint
+        run: |
+          curl -sf -X GET "https://crypto-analyzer-production-d4d2.up.railway.app/api/cron?secret=${{ secrets.CRON_SECRET }}"
