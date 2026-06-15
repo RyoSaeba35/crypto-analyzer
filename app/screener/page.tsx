@@ -5,7 +5,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { ScreenerCrypto as Coin, MetricSet } from '@/types'
-import { calculateScore, scoreColor } from '@/lib/scoring'
+import { calculateScore, scoreColor, trendLabel } from '@/lib/scoring'
 
 // ── Types ─────────────────────────────────────────────────
 
@@ -46,6 +46,10 @@ function ScreenerContent() {
   const [selectedCoin, setSelectedCoin]   = useState<Coin | null>(null)
   const [selectedMetric, setSelectedMetric] = useState<keyof MetricSet>('count_above_default')
 
+  const [hideDeclining, setHideDeclining] = useState(
+    searchParams.get('hideDeclining') === 'true'
+  )
+
   useEffect(() => {
     const fetchData = async () => {
       try {
@@ -69,8 +73,9 @@ function ScreenerContent() {
     params.set('showLowVolume', String(showLowVolume))
     params.set('minAge', String(minAge))
     params.set('showNewCoins', String(showNewCoins))
+    params.set('hideDeclining', String(hideDeclining))
     router.replace(`?${params.toString()}`, { scroll: false })
-  }, [minVolume, showLowVolume, minAge, showNewCoins, router])
+  }, [minVolume, showLowVolume, minAge, showNewCoins, hideDeclining, router])
 
   const handleSort = (column: string) => {
     if (sortBy === column) {
@@ -129,6 +134,9 @@ function ScreenerContent() {
     } else if (sortBy === 'market_cap') {
       aVal = a.market_cap
       bVal = b.market_cap
+    } else if (sortBy === 'net_var') {
+      aVal = a.metrics['5m_90']?.net_var ?? 0
+      bVal = b.metrics['5m_90']?.net_var ?? 0
     } else {
       const aM = a.metrics['5m_30']
       const bM = b.metrics['5m_30']
@@ -139,11 +147,13 @@ function ScreenerContent() {
     return sortDir === 'asc' ? aVal - bVal : bVal - aVal
   })
 
-  // ── Filter by volume and age ────────────────────────────
+  // ── Filter by volume, age, and trend ────────────────────
   const visibleCoins = sortedCoins.filter(coin => {
     const volumeOk = showLowVolume || coin.total_volume >= minVolume
     const ageOk = showNewCoins || (coin.metrics['5m_90']?.actual_days ?? 0) >= minAge
-    return volumeOk && ageOk
+    const netVar90 = coin.metrics['5m_90']?.net_var ?? 0
+    const trendOk = !hideDeclining || netVar90 >= -20
+    return volumeOk && ageOk && trendOk
   })
 
   // ── Limit to top 50 unless "show all" is active ────────
@@ -188,13 +198,19 @@ function ScreenerContent() {
             window.{' '}
             <span className="font-medium">Recovery</span> = average days to bounce back after a drop.
           </p>
-          <p>
+          <p className="mb-1">
             <span className="font-medium">Score</span> combines all of these (activity, recovery
             speed, trend stability, and recent consistency) into a single ranking — higher means a
             more promising candidate for a DCA bot.{' '}
             <span className="text-green-600 font-medium">Green</span> (&gt;2) = strong,{' '}
             <span className="text-yellow-600 font-medium">yellow</span> (0.5–2) = moderate,{' '}
             <span className="text-gray-400 font-medium">gray</span> (&lt;0.5) = weak.
+          </p>
+          <p>
+            <span className="font-medium">Trend (90d)</span> = net price change over 90 days.{' '}
+            <span className="text-red-600 font-medium">📉 Declining</span> (&lt; -20%) coins may
+            show great backtest results while in a slow death-spiral — use the &quot;hide declining
+            coins&quot; filter to exclude them, or pair with a stop-loss in the backtester.
           </p>
         </div>
 
@@ -247,6 +263,14 @@ function ScreenerContent() {
                   onChange={(e) => setShowNewCoins(e.target.checked)}
                 />
                 Show new coins
+              </label>
+              <label className="flex items-center gap-2 text-sm text-gray-700">
+                <input
+                  type="checkbox"
+                  checked={hideDeclining}
+                  onChange={(e) => setHideDeclining(e.target.checked)}
+                />
+                Hide declining coins (90d trend &lt; -20%)
               </label>
             </div>
           )}
@@ -315,6 +339,13 @@ function ScreenerContent() {
                     Data Days{arrow('actual_days')}
                   </th>
                   <th
+                    onClick={() => handleSort('net_var')}
+                    className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:text-gray-700 bg-gray-50"
+                    title="Net price change over the last 90 days — helps spot sustained downtrends vs range-bound coins"
+                  >
+                    Trend (90d){arrow('net_var')}
+                  </th>
+                  <th
                     onClick={() => handleSort('score')}
                     className="px-4 py-3 text-left text-xs font-medium text-gray-500 uppercase cursor-pointer hover:text-gray-700 bg-gray-50"
                     title="Composite ranking: activity, recovery speed, trend stability, and recent consistency"
@@ -329,6 +360,8 @@ function ScreenerContent() {
                   const score = calculateScore(coin)
                   const isLowVolume = coin.total_volume < minVolume
                   const isTooNew = (coin.metrics['5m_90']?.actual_days ?? 0) < minAge
+                  const netVar90 = coin.metrics['5m_90']?.net_var
+                  const trend = trendLabel(coin)
 
                   let rowClass = 'cursor-pointer hover:bg-gray-50'
                   if (isLowVolume && isTooNew) rowClass = 'cursor-pointer bg-orange-100'
@@ -387,6 +420,15 @@ function ScreenerContent() {
                       </td>
                       <td className="px-4 py-3 text-sm text-gray-900">
                         {m ? `${m.actual_days}d` : '—'}
+                      </td>
+                      <td className="px-4 py-3 text-sm">
+                        {netVar90 !== undefined ? (
+                          <span className={trend.className}>
+                            {trend.emoji} {netVar90.toFixed(1)}%
+                          </span>
+                        ) : (
+                          <span className="text-gray-900">—</span>
+                        )}
                       </td>
                       <td className={`px-4 py-3 text-sm font-medium ${scoreColor(score)}`}>
                         {score.toFixed(2)}

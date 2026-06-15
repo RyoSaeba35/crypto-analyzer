@@ -72,3 +72,19 @@ export function scoreColor(score: number): string {
   if (score > 0.5) return 'text-yellow-600'
   return 'text-gray-400'
 }
+
+export function trendLabel(coin: Coin): {
+  label: string
+  emoji: string
+  className: string
+} {
+  const netVar90 = coin.metrics['5m_90']?.net_var ?? 0
+
+  if (netVar90 < -20) {
+    return { label: 'Declining', emoji: '📉', className: 'text-red-600' }
+  }
+  if (netVar90 > 20) {
+    return { label: 'Rising', emoji: '📈', className: 'text-blue-600' }
+  }
+  return { label: 'Ranging', emoji: '↔', className: 'text-green-600' }
+}

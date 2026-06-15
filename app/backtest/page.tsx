@@ -18,6 +18,11 @@ interface CoinOption {
   limited_data: boolean
 }
 
+// ── Standard params used for the quick per-coin weekly scan ──
+const STANDARD = { deviation: 2.4, max_orders: 15, tp_target: 2, multiplier: 1.3 }
+const STANDARD_TOTAL_ORDERS = STANDARD.max_orders + 1
+const STANDARD_MIN_CAPITAL = (Math.pow(STANDARD.multiplier, STANDARD_TOTAL_ORDERS) - 1) / (STANDARD.multiplier - 1)
+
 export default function BacktestPage() {
   const [coins, setCoins]     = useState<CoinOption[]>([])
   const [loading, setLoading] = useState(true)
@@ -40,6 +45,16 @@ export default function BacktestPage() {
   const [runError, setRunError]   = useState<string | null>(null)
   const [showAllCycles, setShowAllCycles] = useState(false)
 
+  // ── Weekly breakdown state ────────────────────────────────
+  const [weeklyResults, setWeeklyResults] = useState<BacktestResult[] | null>(null)
+  const [weeklyRunning, setWeeklyRunning] = useState(false)
+  const [weeklyProgress, setWeeklyProgress] = useState(0)
+  const [weeklyError, setWeeklyError] = useState<string | null>(null)
+
+  // ── Per-coin quick weekly scan (for dropdown) ─────────────
+  // undefined/missing = not started yet, null = failed, number = pnl_pct
+  const [weeklyScanResults, setWeeklyScanResults] = useState<Record<string, number | null>>({})
+
   // ── Load available coins ─────────────────────────────────
   useEffect(() => {
     const fetchCoins = async () => {
@@ -51,7 +66,13 @@ export default function BacktestPage() {
         if (data.coins.length > 0) {
           const first = data.coins[0]
           setCoinId(first.coin_id)
-          setDateFrom(first.earliest.slice(0, 16))
+
+          const latest = new Date(first.latest)
+          const earliest = new Date(first.earliest)
+          const sevenDaysBefore = new Date(latest.getTime() - 7 * 24 * 60 * 60 * 1000)
+          const defaultFrom = sevenDaysBefore > earliest ? sevenDaysBefore : earliest
+
+          setDateFrom(defaultFrom.toISOString().slice(0, 16))
           setDateTo(first.latest.slice(0, 16))
         }
       } catch (err) {
@@ -63,14 +84,80 @@ export default function BacktestPage() {
     fetchCoins()
   }, [])
 
+  // ── Progressive scan: run a quick last-7-days backtest at
+  //    standard params for every coin, to populate the dropdown ──
+  useEffect(() => {
+    if (coins.length === 0) return
+
+    let cancelled = false
+
+    const scan = async () => {
+      for (const coin of coins) {
+        if (cancelled) return
+
+        try {
+          const latest = new Date(coin.latest)
+          const earliest = new Date(coin.earliest)
+          const sevenDaysBefore = new Date(latest.getTime() - 7 * 24 * 60 * 60 * 1000)
+          const windowStart = sevenDaysBefore > earliest ? sevenDaysBefore : earliest
+
+          const res = await fetch('/api/backtest', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+              coin_id:    coin.coin_id,
+              date_from:  windowStart.toISOString(),
+              date_to:    coin.latest,
+              deviation:  STANDARD.deviation,
+              max_orders: STANDARD.max_orders,
+              tp_target:  STANDARD.tp_target,
+              multiplier: STANDARD.multiplier,
+              capital:    STANDARD_MIN_CAPITAL,
+            }),
+          })
+
+          const data = await res.json()
+
+          if (!cancelled) {
+            setWeeklyScanResults(prev => ({
+              ...prev,
+              [coin.coin_id]: data.success ? data.result.total_pnl_pct : null,
+            }))
+          }
+        } catch {
+          if (!cancelled) {
+            setWeeklyScanResults(prev => ({ ...prev, [coin.coin_id]: null }))
+          }
+        }
+      }
+    }
+
+    scan()
+
+    return () => { cancelled = true }
+  }, [coins])
+
   // ── When coin changes, reset date range to its bounds ────
   const handleCoinChange = (newCoinId: string) => {
     setCoinId(newCoinId)
     const coin = coins.find(c => c.coin_id === newCoinId)
     if (coin) {
-      setDateFrom(coin.earliest.slice(0, 16))
+      const latest = new Date(coin.latest)
+      const earliest = new Date(coin.earliest)
+      const sevenDaysBefore = new Date(latest.getTime() - 7 * 24 * 60 * 60 * 1000)
+      const defaultFrom = sevenDaysBefore > earliest ? sevenDaysBefore : earliest
+
+      setDateFrom(defaultFrom.toISOString().slice(0, 16))
       setDateTo(coin.latest.slice(0, 16))
     }
+  }
+
+  // ── Format a coin's quick scan result for the dropdown ────
+  const formatScanResult = (coinId: string): string => {
+    const val = weeklyScanResults[coinId]
+    if (val === undefined) return '...'
+    if (val === null) return 'err'
+    return `${val >= 0 ? '+' : ''}${val.toFixed(1)}%`
   }
 
   // ── Live minimum capital calculation ─────────────────────
@@ -122,6 +209,59 @@ export default function BacktestPage() {
       setRunError(err instanceof Error ? err.message : 'Unknown error')
     } finally {
       setRunning(false)
+    }
+  }
+
+  // ── Run the weekly breakdown ───────────────────────────────
+  const runWeeklyBreakdown = async () => {
+    if (capital === '' || capitalTooLow || !coinId || !dateTo) return
+
+    setWeeklyRunning(true)
+    setWeeklyError(null)
+    setWeeklyResults(null)
+    setWeeklyProgress(0)
+
+    const anchor = new Date(dateTo)
+    const results: BacktestResult[] = []
+
+    try {
+      for (let week = 0; week < 4; week++) {
+        const windowEnd = new Date(anchor.getTime() - week * 7 * 24 * 60 * 60 * 1000)
+        const windowStart = new Date(windowEnd.getTime() - 7 * 24 * 60 * 60 * 1000)
+
+        setWeeklyProgress(week + 1)
+
+        const res = await fetch('/api/backtest', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            coin_id:    coinId,
+            date_from:  windowStart.toISOString(),
+            date_to:    windowEnd.toISOString(),
+            deviation,
+            max_orders: maxOrders,
+            tp_target:  tpTarget,
+            multiplier,
+            capital,
+            stop_loss_pct: stopLoss === '' ? undefined : stopLoss,
+          }),
+        })
+
+        const data = await res.json()
+
+        if (!data.success) {
+          setWeeklyError(`Week ${week + 1}: ${data.error || 'Backtest failed'}`)
+          return
+        }
+
+        results.push(data.result)
+      }
+
+      setWeeklyResults(results)
+    } catch (err) {
+      setWeeklyError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setWeeklyRunning(false)
     }
   }
 
@@ -191,14 +331,14 @@ export default function BacktestPage() {
                 <optgroup label="Full history (~90 days)">
                   {fullDataCoins.map(c => (
                     <option key={c.coin_id} value={c.coin_id}>
-                      {c.symbol} — {c.name} ({c.days_span}d)
+                      {c.symbol} — {c.name} ({c.days_span}d)  •  {formatScanResult(c.coin_id)}
                     </option>
                   ))}
                 </optgroup>
                 <optgroup label="Limited history (~6 days)">
                   {limitedDataCoins.map(c => (
                     <option key={c.coin_id} value={c.coin_id}>
-                      {c.symbol} — {c.name} ({c.days_span}d)
+                      {c.symbol} — {c.name} ({c.days_span}d)  •  {formatScanResult(c.coin_id)}
                     </option>
                   ))}
                 </optgroup>
@@ -208,6 +348,10 @@ export default function BacktestPage() {
                   Only {selectedCoin.days_span} days of data available for this coin
                 </p>
               )}
+              <p className="text-xs text-gray-400 mt-1">
+                P&L shown is a quick last-7-days estimate at standard params (2.4% / 15 / 2% / 1.3x,
+                minimum capital). Scanning all coins — may take a minute to fully populate.
+              </p>
             </div>
 
             {/* Date range */}
@@ -353,14 +497,21 @@ export default function BacktestPage() {
 
           </div>
 
-          {/* Run button */}
-          <div className="mt-4">
+          {/* Run buttons */}
+          <div className="mt-4 flex gap-2 flex-wrap">
             <button
               onClick={runBacktest}
               disabled={running || capital === '' || capitalTooLow || !coinId}
               className="bg-blue-600 text-white px-6 py-2 rounded-lg hover:bg-blue-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm font-medium"
             >
               {running ? 'Running...' : 'Run Backtest'}
+            </button>
+            <button
+              onClick={runWeeklyBreakdown}
+              disabled={weeklyRunning || capital === '' || capitalTooLow || !coinId}
+              className="bg-gray-600 text-white px-6 py-2 rounded-lg hover:bg-gray-700 disabled:bg-gray-300 disabled:cursor-not-allowed transition-colors text-sm font-medium"
+            >
+              {weeklyRunning ? `Running week ${weeklyProgress} of 4...` : 'Run Weekly Breakdown'}
             </button>
           </div>
 
@@ -369,7 +520,71 @@ export default function BacktestPage() {
               {runError}
             </div>
           )}
+
+          {weeklyError && (
+            <div className="mt-3 text-sm text-red-600 bg-red-50 border border-red-100 rounded px-3 py-2">
+              {weeklyError}
+            </div>
+          )}
         </div>
+
+        {/* Weekly breakdown results */}
+        {weeklyResults && (
+          <div className="bg-white rounded-lg shadow p-4 mb-6">
+            <h2 className="text-lg font-bold text-gray-900 mb-1">Weekly Breakdown</h2>
+            <p className="text-sm text-gray-500 mb-4">
+              Same parameters run independently on each of the last 4 non-overlapping 7-day
+              windows, each starting fresh with {typeof capital === 'number' ? capital.toFixed(2) : ''} USDT —
+              shows whether performance is consistent week to week.
+            </p>
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200 text-sm">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Week</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Date Range</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">P&L</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">P&L %</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Cycles</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Win Rate</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Max Drawdown</th>
+                    <th className="px-3 py-2 text-left text-xs font-medium text-gray-500 uppercase">Notes</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-gray-200">
+                  {weeklyResults.map((r, i) => (
+                    <tr key={i} className={r.bot_died ? 'bg-red-50' : 'hover:bg-gray-50'}>
+                      <td className="px-3 py-2 text-gray-900 font-medium">
+                        Week {i + 1} {i === 0 ? '(most recent)' : ''}
+                      </td>
+                      <td className="px-3 py-2 text-gray-500 text-xs">
+                        {new Date(r.date_from).toLocaleDateString()} – {new Date(r.date_to).toLocaleDateString()}
+                      </td>
+                      <td className={`px-3 py-2 font-medium ${r.total_pnl >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {r.total_pnl >= 0 ? '+' : ''}{r.total_pnl.toFixed(2)} USDT
+                      </td>
+                      <td className={`px-3 py-2 font-medium ${r.total_pnl_pct >= 0 ? 'text-green-600' : 'text-red-600'}`}>
+                        {r.total_pnl_pct >= 0 ? '+' : ''}{r.total_pnl_pct.toFixed(1)}%
+                      </td>
+                      <td className="px-3 py-2 text-gray-900">
+                        {r.cycles_completed}
+                        {r.cycles_stuck > 0 && <span className="text-yellow-600"> +{r.cycles_stuck} open</span>}
+                        {r.cycles_stopped_out > 0 && <span className="text-red-600"> +{r.cycles_stopped_out} SL</span>}
+                      </td>
+                      <td className="px-3 py-2 text-gray-900">{(r.win_rate * 100).toFixed(0)}%</td>
+                      <td className="px-3 py-2 text-gray-900">
+                        -{r.max_drawdown.toFixed(2)} ({r.max_drawdown_pct.toFixed(1)}%)
+                      </td>
+                      <td className="px-3 py-2 text-xs">
+                        {r.bot_died && <span className="text-red-600 font-medium">Bot died</span>}
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          </div>
+        )}
 
         {/* Results summary */}
         {result && (
