@@ -32,6 +32,7 @@ export default function BacktestPage() {
   const [tpTarget, setTpTarget]   = useState(2)
   const [multiplier, setMultiplier] = useState(1.3)
   const [capital, setCapital] = useState<number | ''>('')
+  const [stopLoss, setStopLoss] = useState<number | ''>('')
 
   // ── Run state ────────────────────────────────────────────
   const [running, setRunning]     = useState(false)
@@ -105,6 +106,7 @@ export default function BacktestPage() {
           tp_target:  tpTarget,
           multiplier,
           capital,  // now narrowed to `number` by the guard above
+          stop_loss_pct: stopLoss === '' ? undefined : stopLoss,
         }),
       })
 
@@ -299,6 +301,30 @@ export default function BacktestPage() {
               />
             </div>
 
+            {/* Stop loss */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Stop-loss (% below avg entry, optional)
+              </label>
+              <input
+                type="number"
+                value={stopLoss}
+                placeholder="none"
+                step={0.1}
+                min={0}
+                max={99}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setStopLoss(val === '' ? '' : Number(val))
+                }}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 bg-white placeholder-gray-400"
+              />
+              <p className="text-xs mt-1 text-gray-500">
+                If set, a cycle closes at a loss once price drops this far below average entry —
+                prevents indefinite accumulation during a sustained downtrend.
+              </p>
+            </div>
+
             {/* Capital */}
             <div className="md:col-span-2">
               <label className="block text-sm font-medium text-gray-700 mb-1">
@@ -350,6 +376,18 @@ export default function BacktestPage() {
           <div className="bg-white rounded-lg shadow p-4">
             <h2 className="text-lg font-bold text-gray-900 mb-4">Results</h2>
 
+            {/* Bot died warning */}
+            {result.bot_died && (
+              <div className="mb-4 bg-red-50 border border-red-200 rounded p-3 text-sm text-red-700">
+                <div className="font-medium mb-1">⚠ Bot ran out of capital</div>
+                <div className="text-xs">
+                  After accumulated losses, the remaining capital could no longer cover a valid
+                  first order (below 1 USDT). The simulation stopped early — results below reflect
+                  what happened up to that point.
+                </div>
+              </div>
+            )}
+
             <div className="grid grid-cols-2 md:grid-cols-4 gap-4 mb-4">
               <div className="bg-gray-50 rounded p-3">
                 <div className="text-xs text-gray-500 uppercase">Total P&L</div>
@@ -365,7 +403,10 @@ export default function BacktestPage() {
                 <div className="text-xs text-gray-500 uppercase">Cycles Completed</div>
                 <div className="text-xl font-bold text-gray-900">{result.cycles_completed}</div>
                 <div className="text-xs text-gray-500">
-                  {result.cycles_stuck > 0 ? `${result.cycles_stuck} still open` : 'none open'}
+                  {result.cycles_stuck > 0 && `${result.cycles_stuck} still open`}
+                  {result.cycles_stuck > 0 && result.cycles_stopped_out > 0 && ', '}
+                  {result.cycles_stopped_out > 0 && `${result.cycles_stopped_out} stopped out`}
+                  {result.cycles_stuck === 0 && result.cycles_stopped_out === 0 && 'none open'}
                 </div>
               </div>
 
@@ -382,6 +423,20 @@ export default function BacktestPage() {
                   {result.capital_start.toFixed(2)} → {result.capital_end.toFixed(2)}
                 </div>
                 <div className="text-xs text-gray-500">USDT</div>
+              </div>
+            </div>
+
+            {/* Max drawdown */}
+            <div className="mb-4 bg-gray-50 rounded p-3 inline-block">
+              <div className="text-xs text-gray-500 uppercase">Max Drawdown</div>
+              <div className="text-lg font-bold text-gray-900">
+                -{result.max_drawdown.toFixed(2)} USDT
+                <span className="text-sm text-gray-500 ml-2">
+                  (-{result.max_drawdown_pct.toFixed(1)}% from peak)
+                </span>
+              </div>
+              <div className="text-xs text-gray-500 mt-1">
+                Largest peak-to-trough drop in capital across all cycles
               </div>
             </div>
 
@@ -484,7 +539,14 @@ export default function BacktestPage() {
                   </thead>
                   <tbody className="divide-y divide-gray-200">
                     {(showAllCycles ? result.cycles : result.cycles.slice(0, 50)).map(c => (
-                      <tr key={c.cycle_num} className={c.status === 'open_at_end' ? 'bg-yellow-50' : 'hover:bg-gray-50'}>
+                      <tr
+                        key={c.cycle_num}
+                        className={
+                          c.status === 'open_at_end' ? 'bg-yellow-50'
+                          : c.status === 'stopped_out' ? 'bg-red-50'
+                          : 'hover:bg-gray-50'
+                        }
+                      >
                         <td className="px-3 py-2 text-gray-500">{c.cycle_num}</td>
                         <td className="px-3 py-2 text-gray-900">{c.start_price.toPrecision(6)}</td>
                         <td className="px-3 py-2 text-gray-900">{c.orders.length}</td>
@@ -504,6 +566,8 @@ export default function BacktestPage() {
                         <td className="px-3 py-2">
                           {c.status === 'open_at_end' ? (
                             <span className="text-xs bg-yellow-100 text-yellow-800 px-2 py-0.5 rounded">open</span>
+                          ) : c.status === 'stopped_out' ? (
+                            <span className="text-xs bg-red-100 text-red-800 px-2 py-0.5 rounded">stopped out</span>
                           ) : (
                             <span className="text-xs bg-green-100 text-green-800 px-2 py-0.5 rounded">closed</span>
                           )}

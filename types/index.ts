@@ -96,6 +96,8 @@ export interface BacktestParams {
   tp_target:  number   // 2.0
   multiplier: number   // 1.3
   capital:    number   // 250
+  stop_loss_pct?: number   // optional; cycle stops out when
+                           // price <= avg_entry * (1 - stop_loss_pct/100)
 }
 
 export interface BacktestOrder {
@@ -114,7 +116,7 @@ export interface BacktestCycle {
   close_price:    number | null  // null if stuck
   profit:         number | null  // null if stuck
   duration_hours: number | null  // null if stuck
-  status:         'closed' | 'open_at_end'
+  status:         'closed' | 'open_at_end' | 'stopped_out'
   capital_after:  number | null
 }
 
@@ -130,8 +132,12 @@ export interface BacktestResult {
   capital_end:      number
   cycles_completed: number
   cycles_stuck:     number
+  cycles_stopped_out: number
   win_rate:         number
   max_capital_used: number
+  max_drawdown:     number       // largest peak-to-trough drop in capital_after, in USDT
+  max_drawdown_pct: number       // same, as % of the peak
+  bot_died:         boolean      // true if order1Size dropped below 1 USDT and the bot had to stop
   // detail
   cycles:           BacktestCycle[]
   // final bot state
