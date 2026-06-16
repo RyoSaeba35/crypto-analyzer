@@ -17,7 +17,7 @@ export async function GET() {
       'SELECT coin_id FROM cryptos ORDER BY market_cap_rank ASC'
     )
 
-    const WINDOWS = [1, 7, 15, 30, 90]
+    const WINDOWS = [1, 7, 15, 30, 60]
     const INTERVALS = ['5m', '10m', '20m', '30m', '1h']
 
     let processed = 0

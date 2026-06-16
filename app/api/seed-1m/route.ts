@@ -1,5 +1,5 @@
 // app/api/seed-1m/route.ts
-// Fetches 90 days of 1-minute candles for the top 25 coins
+// Fetches 60 days of 1-minute candles for the top 25 coins
 // by score (for use by the backtester). Tries KuCoin first
 // (often has deeper 1m history), falls back to the coin's
 // existing exchange (gate/binance) if KuCoin doesn't have it.
@@ -70,13 +70,13 @@ export async function GET() {
     console.log('Top 25 by score:')
     top25.forEach((c, i) => console.log(`${i + 1}. ${c.coin.symbol} — ${c.score.toFixed(2)}`))
 
-    // ── Step 3: fetch 90 days of 1m candles for each ────
+    // ── Step 3: fetch 60 days of 1m candles for each ────
     let totalCandles = 0
     let errorCount = 0
 
     for (const { coin } of top25) {
       try {
-        const inserted = await fetch90Days1m(coin.coin_id, coin.symbol, coin.exchange)
+        const inserted = await fetch60Days1m(coin.coin_id, coin.symbol, coin.exchange)
         totalCandles += inserted
         console.log(`${coin.symbol}: ${inserted} 1m candles inserted`)
       } catch (err) {
@@ -103,16 +103,16 @@ export async function GET() {
   }
 }
 
-// ── Fetch 90 days of 1m candles for one coin ─────────────
+// ── Fetch 60 days of 1m candles for one coin ─────────────
 // Tries KuCoin first (often deeper 1m history), falls back
 // to the coin's existing exchange (gate/binance) for any
 // requests where KuCoin returns nothing.
-async function fetch90Days1m(
+async function fetch60Days1m(
   coin_id: string,
   symbol: string,
   exchange: string
 ): Promise<number> {
-  const DAYS = 90
+  const DAYS = 60
   const CANDLES_PER_DAY = 1440  // 1m candles
   const TOTAL_CANDLES = DAYS * CANDLES_PER_DAY
   const PER_REQUEST = 1000

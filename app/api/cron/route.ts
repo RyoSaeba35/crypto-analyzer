@@ -4,8 +4,8 @@
 //
 // Also maintains 1m candle data (ohlcv_1m) for the top 25
 // coins by score, used by the backtester. New entrants to
-// the top 25 get a full 90-day backfill; existing ones get
-// a cheap incremental top-up. Data is trimmed to 90 days.
+// the top 25 get a full 60-day backfill; existing ones get
+// a cheap incremental top-up. Data is trimmed to 60 days.
 
 import pool from '@/lib/db'
 import { NextRequest } from 'next/server'
@@ -26,7 +26,7 @@ export async function GET(request: NextRequest) {
   if (secret !== process.env.CRON_SECRET) {
     return Response.json({ success: false, error: 'Unauthorized' }, { status: 401 })
   }
-  
+
   try {
     console.log('Daily cron job started...')
 
@@ -69,10 +69,10 @@ export async function GET(request: NextRequest) {
 
     console.log(`Candles saved: ${candleCount}, errors: ${errorCount}`)
 
-    // ── Step 4: delete candles older than 90 days ────────
+    // ── Step 4: delete candles older than 60 days ────────
     const deleted = await pool.query(`
       DELETE FROM ohlcv_data
-      WHERE open_time < NOW() - INTERVAL '90 days'
+      WHERE open_time < NOW() - INTERVAL '60 days'
     `)
     console.log(`Deleted ${deleted.rowCount} old candles`)
 
@@ -98,8 +98,8 @@ export async function GET(request: NextRequest) {
           )
 
           if (existing.length === 0) {
-            console.log(`${coin.symbol}: new to top 25, backfilling 90 days...`)
-            new1mCandles += await fetch90Days1m(coin.coin_id, coin.symbol, coin.exchange)
+            console.log(`${coin.symbol}: new to top 25, backfilling 60 days...`)
+            new1mCandles += await fetch60Days1m(coin.coin_id, coin.symbol, coin.exchange)
           } else {
             new1mCandles += await fetchMissing1mCandles(coin.coin_id, coin.symbol, coin.exchange)
           }
@@ -111,7 +111,7 @@ export async function GET(request: NextRequest) {
       }
 
       const deleted1m = await pool.query(`
-        DELETE FROM ohlcv_1m WHERE open_time < NOW() - INTERVAL '90 days'
+        DELETE FROM ohlcv_1m WHERE open_time < NOW() - INTERVAL '60 days'
       `)
       console.log(`1m candles added: ${new1mCandles}, trimmed: ${deleted1m.rowCount}, errors: ${new1mErrors}`)
     } catch (err) {
@@ -218,7 +218,7 @@ async function calculateAllMetrics() {
     'SELECT coin_id FROM cryptos ORDER BY market_cap_rank ASC'
   )
 
-  const WINDOWS = [1, 7, 15, 30, 90]
+  const WINDOWS = [1, 7, 15, 30, 60]
   const INTERVALS = ['5m', '10m', '20m', '30m', '1h']
 
   for (const coin of coins) {
@@ -398,13 +398,13 @@ async function fetchMissing1mCandles(
   return inserted
 }
 
-// ── Full 90-day backfill (for new top-25 entrants) ───────
-async function fetch90Days1m(
+// ── Full 60-day backfill (for new top-25 entrants) ───────
+async function fetch60Days1m(
   coin_id: string,
   symbol: string,
   exchange: string
 ): Promise<number> {
-  const TOTAL_CANDLES = 90 * 1440
+  const TOTAL_CANDLES = 60 * 1440
   const PER_REQUEST = 1000
   const useBinance = exchange !== 'gate'
   const now = Date.now()
