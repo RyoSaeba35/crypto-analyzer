@@ -29,7 +29,7 @@ export async function POST(request: Request) {
       return Response.json({ success: true, message: 'Already pinned' })
     }
 
-    const hasDepth = await has1mDepth(coin_id, exchange, 30)
+    const hasDepth = await has1mDepth(symbol, exchange, 30)
     if (!hasDepth) {
       return Response.json(
         { success: false, error: 'This coin has less than 30 days of 1-minute history available — not enough for a meaningful backtest' },

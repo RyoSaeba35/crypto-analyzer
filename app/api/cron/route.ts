@@ -358,7 +358,7 @@ async function getTop10Coins(): Promise<(ScreenerCrypto & { exchange: string })[
   const selected: (ScreenerCrypto & { exchange: string })[] = []
   for (const { coin } of eligible) {
     if (selected.length >= 10) break
-    const hasDepth = await has1mDepth(coin.coin_id, coin.exchange)
+    const hasDepth = await has1mDepth(coin.symbol, coin.exchange)
     if (hasDepth) {
       selected.push(coin)
     } else {
