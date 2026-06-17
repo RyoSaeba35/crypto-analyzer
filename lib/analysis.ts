@@ -1,10 +1,5 @@
 // lib/analysis.ts
-// Pure calculation functions — no API calls, no DB queries
-// Takes raw candles as input, returns computed metrics
-
 import { OhlcvRow, ComputedMetricRow } from '../types'
-
-// ─── Default thresholds per interval ──────────────────────
 
 export const DEFAULT_THRESHOLDS: Record<string, number> = {
   '5m':  3.0,
@@ -14,8 +9,6 @@ export const DEFAULT_THRESHOLDS: Record<string, number> = {
   '1h':  12.0,
 }
 
-// ─── Group sizes for aggregation ──────────────────────────
-
 export const INTERVAL_GROUPS: Record<string, number> = {
   '5m':  1,
   '10m': 2,
@@ -24,22 +17,19 @@ export const INTERVAL_GROUPS: Record<string, number> = {
   '1h':  12,
 }
 
-// ─── Calculate amplitude of a single candle ───────────────
-
+//  Calculate amplitude of a single candle
 export function candleAmplitude(candle: OhlcvRow): number {
   return (candle.high - candle.low) / candle.low * 100
 }
 
-// ─── Average amplitude across all candles ─────────────────
-
+//  Average amplitude across all candles
 export function avgAmplitude(candles: OhlcvRow[]): number {
   if (candles.length === 0) return 0
   const total = candles.reduce((sum, c) => sum + candleAmplitude(c), 0)
   return total / candles.length
 }
 
-// ─── Count candles where amplitude exceeds threshold ──────
-
+//  Count candles where amplitude exceeds threshold
 export function countAboveThreshold(
   candles:    OhlcvRow[],
   threshold:  number,
@@ -49,8 +39,7 @@ export function countAboveThreshold(
   return count / windowDays
 }
 
-// ─── Net variation over the period ────────────────────────
-
+//  Net variation over the period
 export function netVariation(candles: OhlcvRow[]): number {
   if (candles.length < 2) return 0
   const firstClose = candles[0].close
@@ -58,8 +47,7 @@ export function netVariation(candles: OhlcvRow[]): number {
   return (lastClose - firstClose) / firstClose * 100
 }
 
-// ─── Max drawdown ─────────────────────────────────────────
-
+//  Max drawdown
 export function maxDrawdown(candles: OhlcvRow[]): number {
   if (candles.length === 0) return 0
 
@@ -75,14 +63,13 @@ export function maxDrawdown(candles: OhlcvRow[]): number {
   return maxDrop
 }
 
-// ─── Average recovery time ────────────────────────────────
-
+//  Average recovery time
 export function avgRecoveryDays(candles: OhlcvRow[]): number {
   if (candles.length === 0) return 0
 
   const avgAmp = avgAmplitude(candles)
   const DROP_TRIGGER = avgAmp * 3
-  
+
   const recoveryTimes: number[] = []
 
   let i = 0
@@ -125,8 +112,7 @@ export function avgRecoveryDays(candles: OhlcvRow[]): number {
   return recoveryTimes.reduce((a, b) => a + b, 0) / recoveryTimes.length
 }
 
-// ─── Aggregate 5m candles into larger intervals ───────────
-
+//  Aggregate 5m candles into larger intervals
 export function aggregateCandles(
   candles:   OhlcvRow[],
   groupSize: number
@@ -153,8 +139,7 @@ export function aggregateCandles(
   return result
 }
 
-// ─── Calculate all metrics for one coin/interval/window ───
-
+//  Calculate all metrics for one coin/interval/window
 export function calculateMetrics(
   coin_id:    string,
   interval:   string,

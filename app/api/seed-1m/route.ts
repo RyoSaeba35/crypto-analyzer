@@ -14,7 +14,7 @@ export async function GET() {
   try {
     console.log('1m seed started — this will take 20-30 minutes...')
 
-    // ── Step 1: load coins + metrics, same shape as /api/cryptos ──
+    //  Step 1: load coins + metrics, same shape as /api/cryptos
     const { rows } = await pool.query(`
       SELECT
         c.coin_id, c.symbol, c.name, c.image_url, c.current_price,
@@ -61,7 +61,7 @@ export async function GET() {
 
     const allCoins = Array.from(coinsMap.values())
 
-    // ── Step 2: rank by score, take top 25 ──────────────
+    //  Step 2: rank by score, take top 25
     const top25 = allCoins
       .map(coin => ({ coin, score: calculateScore(coin) }))
       .sort((a, b) => b.score - a.score)
@@ -70,7 +70,7 @@ export async function GET() {
     console.log('Top 25 by score:')
     top25.forEach((c, i) => console.log(`${i + 1}. ${c.coin.symbol} — ${c.score.toFixed(2)}`))
 
-    // ── Step 3: fetch 60 days of 1m candles for each ────
+    //  Step 3: fetch 60 days of 1m candles for each
     let totalCandles = 0
     let errorCount = 0
 
@@ -103,7 +103,7 @@ export async function GET() {
   }
 }
 
-// ── Fetch 60 days of 1m candles for one coin ─────────────
+//  Fetch 60 days of 1m candles for one coin
 // Tries KuCoin first (often deeper 1m history), falls back
 // to the coin's existing exchange (gate/binance) for any
 // requests where KuCoin returns nothing.

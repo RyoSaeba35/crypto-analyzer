@@ -1,14 +1,8 @@
 // lib/scoring.ts
-// Shared scoring logic — used by the screener UI and by
-// backend scripts (e.g. selecting top coins for 1m data fetch)
 
 import type { ScreenerCrypto as Coin } from '@/types'
 
-// ── Recency factor ────────────────────────────────────────
-// Compares 7-day activity to 30-day average activity.
-// If a coin was very active a while ago but has calmed down
-// recently, this discounts its score accordingly.
-
+// Recency factor
 export function recencyFactor(coin: Coin, windowDays: number = 30): number {
   const intervals = ['5m', '10m', '20m', '30m', '1h']
   let totalRatio  = 0
@@ -28,10 +22,7 @@ export function recencyFactor(coin: Coin, windowDays: number = 30): number {
   return Math.min(1, avgRatio + 0.3)
 }
 
-// ── 90-day trend snapshot ──────────────────────────────────
-// Pulls the two numbers everything below is built on, so they're
-// only read from coin.metrics in one place.
-
+//  90-day trend snapshot
 function trend90(coin: Coin): { netVar90: number; maxDrop90: number } {
   const m90 = coin.metrics['5m_90']
   return {
@@ -40,16 +31,7 @@ function trend90(coin: Coin): { netVar90: number; maxDrop90: number } {
   }
 }
 
-// ── High-risk detection ────────────────────────────────────
-// True if 90-day price action signals death-spiral risk. Two cases:
-//   1. Sustained decline — net_var90 is just deeply negative.
-//   2. Crashed from a recent peak but net_var still looks flat —
-//      the case net_var alone misses. A coin that pumped hard and
-//      then gave most of it back can land back near its starting
-//      price, so net_var reads near zero even though max_drop shows
-//      it fell off a cliff partway through the window — exactly
-//      the H situation, if the 90d window start predates the pump.
-
+//  High-risk detection
 export function isHighRisk(coin: Coin): boolean {
   const { netVar90, maxDrop90 } = trend90(coin)
   const sustainedDecline = netVar90 < -20
@@ -57,18 +39,13 @@ export function isHighRisk(coin: Coin): boolean {
   return sustainedDecline || crashedFromHigh
 }
 
-// ── Trend penalty ───────────────────────────────────────────
-// Two multiplicative factors over the 90-day window:
-//   - netVarPenalty: punishes large net displacement in either
-//     direction — range-bound is the bot-friendly sweet spot.
-//   - drawdownPenalty: punishes a severe peak-to-trough crash even
-//     when net_var looks flat (see isHighRisk for why net_var alone
-//     isn't enough).
-// Divisors (150, 60) are starting points — worth tuning once we
-// check this against a few more real coins, H included.
+//  Trend penalty
+const CRASH_KILL_THRESHOLD = -70
 
 export function trendPenalty(coin: Coin): number {
   const { netVar90, maxDrop90 } = trend90(coin)
+
+  if (maxDrop90 < CRASH_KILL_THRESHOLD) return 0
 
   const netVarPenalty   = Math.max(0.2,  1 - Math.abs(netVar90)  / 150)
   const drawdownPenalty = Math.max(0.15, 1 - Math.abs(maxDrop90) / 60)
@@ -76,10 +53,7 @@ export function trendPenalty(coin: Coin): number {
   return netVarPenalty * drawdownPenalty
 }
 
-// ── Score calculation ────────────────────────────────────
-// Pure function — takes a coin, returns a composite score
-// Higher score = better DCA bot candidate
-
+//  Score calculation
 export function calculateScore(
   coin: Coin,
   windowDays: number = 30,
@@ -108,10 +82,7 @@ export function calculateScore(
   return composite * recoveryFactor * trendPenalty(coin) * recencyFactor(coin, windowDays)
 }
 
-// ── Score color ───────────────────────────────────────────
-// Visual scale: green = strong candidate, yellow = moderate,
-// gray = weak/unlikely to be useful for the bot
-
+//  Score color
 export function scoreColor(score: number): string {
   if (score > 2)   return 'text-green-600'
   if (score > 0.5) return 'text-yellow-600'

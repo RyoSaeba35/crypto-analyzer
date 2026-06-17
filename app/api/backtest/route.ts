@@ -1,6 +1,4 @@
 // app/api/backtest/route.ts
-// Runs a DCA bot backtest for a given coin, date range,
-// and bot parameters, using 1m candle data.
 
 import pool from '@/lib/db'
 import { runBacktest } from '@/lib/backtest'
@@ -15,7 +13,6 @@ export async function POST(request: Request) {
       deviation, max_orders, tp_target, multiplier, capital, stop_loss_pct
     } = body
 
-    // ── Basic validation ──────────────────────────────────
     if (!coin_id || !date_from || !date_to) {
       return Response.json(
         { success: false, error: 'Missing coin_id, date_from, or date_to' },
@@ -37,7 +34,7 @@ export async function POST(request: Request) {
       )
     }
 
-    // ── Validate minimum capital for order1Size >= 1 USDT ────
+    //  Validate minimum capital for order1Size >= 1 USDT
     const totalOrders = max_orders + 1
     const minCapital = multiplier === 1
       ? totalOrders
@@ -53,7 +50,7 @@ export async function POST(request: Request) {
       )
     }
 
-    // ── Fetch candles for the requested range ─────────────
+    //  Fetch candles for the requested range
     const { rows } = await pool.query(`
       SELECT id, coin_id, open_time, open, high, low, close, volume
       FROM ohlcv_1m
@@ -80,7 +77,7 @@ export async function POST(request: Request) {
       volume:    Number(row.volume),
     }))
 
-    // ── Run the simulation ─────────────────────────────────
+    //  Run the simulation
     const result = runBacktest(candles, {
       coin_id, date_from, date_to,
       deviation, max_orders, tp_target, multiplier, capital, stop_loss_pct

@@ -7,7 +7,7 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import type { ScreenerCrypto as Coin, MetricSet } from '@/types'
 import { calculateScore, scoreColor, trendLabel, isHighRisk } from '@/lib/scoring'
 
-// ── Types ─────────────────────────────────────────────────
+//  Types
 
 interface ApiResponse {
   success: boolean
@@ -15,7 +15,7 @@ interface ApiResponse {
   coins:   Coin[]
 }
 
-// ── Component ─────────────────────────────────────────────
+//  Component
 
 function ScreenerContent() {
   const router = useRouter()
@@ -27,7 +27,7 @@ function ScreenerContent() {
   const [sortBy, setSortBy]               = useState<string>('score')
   const [sortDir, setSortDir]             = useState<'asc' | 'desc'>('desc')
 
-  // ── Filters initialized from URL query params ──────────
+  //  Filters initialized from URL query params
   const [minVolume, setMinVolume] = useState(
     Number(searchParams.get('minVolume')) || 5_000_000
   )
@@ -66,7 +66,7 @@ function ScreenerContent() {
     fetchData()
   }, [])
 
-  // ── Sync filters to URL query params ────────────────────
+  //  Sync filters to URL query params
   useEffect(() => {
     const params = new URLSearchParams()
     params.set('minVolume', String(minVolume))
@@ -117,7 +117,7 @@ function ScreenerContent() {
     )
   }
 
-  // ── Sort coins ─────────────────────────────────────────
+  //  Sort coins ─
   const sortedCoins = [...coins].sort((a, b) => {
     let aVal: number
     let bVal: number
@@ -147,7 +147,7 @@ function ScreenerContent() {
     return sortDir === 'asc' ? aVal - bVal : bVal - aVal
   })
 
-  // ── Filter by volume, age, and trend ────────────────────
+  //  Filter by volume, age, and trend
   const visibleCoins = sortedCoins.filter(coin => {
     const volumeOk = showLowVolume || coin.total_volume >= minVolume
     const ageOk = showNewCoins || (coin.metrics['5m_90']?.actual_days ?? 0) >= minAge
@@ -156,7 +156,7 @@ function ScreenerContent() {
     return volumeOk && ageOk && trendOk
   })
 
-  // ── Limit to top 50 unless "show all" is active ────────
+  //  Limit to top 50 unless "show all" is active
   const displayedCoins = showAll ? visibleCoins : visibleCoins.slice(0, 50)
 
   const arrow = (column: string) => {
@@ -554,7 +554,7 @@ function ScreenerContent() {
   )
 }
 
-// ── Page wrapper ─────────────────────────────────────────
+//  Page wrapper ─
 // useSearchParams requires a Suspense boundary in Next.js
 
 export default function ScreenerPage() {

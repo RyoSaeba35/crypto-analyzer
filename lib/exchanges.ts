@@ -58,7 +58,7 @@ export async function fetchCandles(
   symbol: string,
   interval: string,
   limit: number = 1000,
-  startTime?: number   // optional unix timestamp in milliseconds
+  startTime?: number
 ): Promise<OhlcvRow[]> {
   let url = `${BINANCE_API}/klines?symbol=${symbol}USDT&interval=${interval}&limit=${limit}`
 
@@ -88,9 +88,7 @@ export async function fetchCandles(
   }))
 }
 
-// ─── Gate.io fallback ─────────────────────────────────────
-// Used when a coin doesn't trade on Binance
-
+// Gate.io fallback
 type GateCandle = [
   string, // [0] timestamp in seconds
   string, // [1] quote volume (USDT)
@@ -105,15 +103,14 @@ type GateCandle = [
 const GATE_API = 'https://api.gateio.ws/api/v4'
 
 export async function fetchCandlesGate(
-  symbol: string,   // e.g. "SOL" → we build "SOL_USDT"
-  interval: string, // e.g. "5m" — Gate.io uses same format
+  symbol: string,
+  interval: string,
   limit: number = 1000,
-  startTime?: number  // unix timestamp in milliseconds
+  startTime?: number
 ): Promise<OhlcvRow[]> {
   let url = `${GATE_API}/spot/candlesticks?currency_pair=${symbol}_USDT&interval=${interval}&limit=${limit}`
 
   if (startTime) {
-    // Gate.io uses seconds not milliseconds
     url += `&from=${Math.floor(startTime / 1000)}`
   }
 
@@ -129,12 +126,12 @@ export async function fetchCandlesGate(
     id:        0,
     coin_id:   symbol,
     interval:  interval,
-    open_time: new Date(parseInt(candle[0]) * 1000), // seconds → ms
+    open_time: new Date(parseInt(candle[0]) * 1000),
     open:      parseFloat(candle[5]),
     high:      parseFloat(candle[3]),
     low:       parseFloat(candle[4]),
     close:     parseFloat(candle[2]),
-    volume:    parseFloat(candle[1]), // USDT volume
+    volume:    parseFloat(candle[1]),
   }))
 }
 
@@ -142,9 +139,7 @@ function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }
 
-// ─── KuCoin fallback ──────────────────────────────────────
-// Often has deeper 1m history than Gate.io for smaller-cap coins
-
+// ─── KuCoin fallback ─
 type KucoinCandle = [string, string, string, string, string, string, string]
 // [timestamp_sec, open, close, high, low, volume, turnover]
 
@@ -152,15 +147,15 @@ const KUCOIN_API = 'https://api.kucoin.com/api/v1'
 
 export async function fetchCandlesKucoin(
   symbol: string,
-  interval: string,  // e.g. "1min" — KuCoin format differs from Binance/Gate
+  interval: string,
   limit: number = 1000,
-  startTime?: number  // unix timestamp in milliseconds
+  startTime?: number,
 ): Promise<OhlcvRow[]> {
   let url = `${KUCOIN_API}/market/candles?type=${interval}&symbol=${symbol}-USDT`
 
   if (startTime) {
     const startSec = Math.floor(startTime / 1000)
-    const endSec = startSec + (limit * 60)  // limit candles × 60s each
+    const endSec = startSec + (limit * 60)
     url += `&startAt=${startSec}&endAt=${endSec}`
   }
 
@@ -188,7 +183,7 @@ export async function fetchCandlesKucoin(
     low:       parseFloat(candle[4]),
     close:     parseFloat(candle[2]),
     volume:    parseFloat(candle[5]),
-  })).reverse()  // KuCoin returns newest-first; we want oldest-first
+  })).reverse()
 }
 
 export async function backfillCandles90d(
