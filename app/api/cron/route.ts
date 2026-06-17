@@ -70,8 +70,6 @@ export async function GET(request: NextRequest) {
     await calculateAllMetrics()
     console.log('Metrics calculated')
 
-    // ── Step 6: maintain 1m candles for top 10 (age + depth
-    // filtered, by score) PLUS any manually pinned coins ──
     console.log('Updating 1m candles...')
     let new1mCandles = 0
     let new1mErrors = 0
@@ -108,8 +106,6 @@ export async function GET(request: NextRequest) {
         await sleep(150)
       }
 
-      // Actively prune anyone no longer in top 10 AND not pinned —
-      // don't wait up to 60 days for the age trim to catch rotation.
       const keepIds = toMaintain.map(c => c.coin_id)
       const pruned = keepIds.length > 0
         ? await pool.query(`DELETE FROM ohlcv_1m WHERE coin_id != ALL($1)`, [keepIds])
@@ -312,8 +308,6 @@ async function upsertCoin(coin: CryptoRow) {
   ])
 }
 
-// ── Top 10 by score, age-filtered (>=30 days of 5m history),
-// verified to have 30+ days of real 1m depth before acceptance ──
 async function getTop10Coins(): Promise<(ScreenerCrypto & { exchange: string })[]> {
   const { rows } = await pool.query(`
     SELECT
@@ -370,8 +364,6 @@ async function getTop10Coins(): Promise<(ScreenerCrypto & { exchange: string })[
   return selected
 }
 
-// ── Manually pinned coins — the 5-coin cap is enforced at pin
-// time (see app/api/backtest-coins/pin/route.ts), not here ──
 async function getPinnedCoins(): Promise<(ScreenerCrypto & { exchange: string })[]> {
   const { rows } = await pool.query(`
     SELECT c.coin_id, c.symbol, c.name, c.image_url, c.current_price,
