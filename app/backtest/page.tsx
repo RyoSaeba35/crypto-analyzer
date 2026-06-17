@@ -171,7 +171,7 @@ export default function BacktestPage() {
     return `${val >= 0 ? '+' : ''}${val.toFixed(1)}%`
   }
 
-  // ── Manual pin/unpin/replace ───────────────────────────────
+  // Manual pin/unpin/replace
   const refreshCoins = async () => {
     const res = await fetch('/api/backtest-coins')
     const data = await res.json()
@@ -196,7 +196,6 @@ export default function BacktestPage() {
           )
         }
       } catch {
-        // picker just stays empty, user can retry by reopening
       }
     }
   }

@@ -258,12 +258,15 @@ export async function has1mDepth(
   const targetTime = Date.now() - days * 24 * 60 * 60 * 1000
   const TOLERANCE_MS = 24 * 60 * 60 * 1000
   const useBinance = exchange !== 'gate'
+  const PROBE_LIMIT = 1440  // a full day's window — gives KuCoin's
+                             // time-window-based query enough room to
+                             // land on real data even with minor gaps
 
-  let candles = await fetchCandlesKucoin(symbol, '1min', 5, targetTime)
+  let candles = await fetchCandlesKucoin(symbol, '1min', PROBE_LIMIT, targetTime)
   if (candles.length === 0) {
     candles = useBinance
-      ? await fetchCandles(symbol, '1m', 5, targetTime)
-      : await fetchCandlesGate(symbol, '1m', 5, targetTime)
+      ? await fetchCandles(symbol, '1m', PROBE_LIMIT, targetTime)
+      : await fetchCandlesGate(symbol, '1m', PROBE_LIMIT, targetTime)
   }
 
   if (candles.length === 0) return false
