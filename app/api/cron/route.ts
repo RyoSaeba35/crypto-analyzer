@@ -1,15 +1,12 @@
 // app/api/cron/route.ts
-// Runs daily — fetches missing candles since last DB entry
-// Self-healing — works even if cron missed several days
-
 import pool from '@/lib/db'
 import { NextRequest } from 'next/server'
 import {
   fetchTopCoins, fetchCandles, fetchCandlesGate, fetchCandlesKucoin,
-  backfillCandles
+  backfillCandles, has1mDepth, backfill1mCandles, insert1mCandles
 } from '@/lib/exchanges'
 import { calculateScore } from '@/lib/scoring'
-import { CryptoRow, OhlcvRow, ScreenerCrypto, MetricSet } from '@/types'
+import { CryptoRow, ScreenerCrypto, MetricSet } from '@/types'
 import {
   calculateMetrics,
   aggregateCandles,
@@ -19,7 +16,6 @@ import {
 let diskFull = false
 
 export async function GET(request: NextRequest) {
-  //  Authentification check
   const secret = request.nextUrl.searchParams.get('secret')
   if (secret !== process.env.CRON_SECRET) {
     return Response.json({ success: false, error: 'Unauthorized' }, { status: 401 })
@@ -28,18 +24,15 @@ export async function GET(request: NextRequest) {
   try {
     console.log('Daily cron job started...')
 
-    // fetch top 1200 coins
     console.log('Fetching top coins from CoinGecko...')
     const coins = await fetchTopCoins(1200)
     console.log(`Got ${coins.length} coins`)
 
-    //  upsert coins
     for (const coin of coins) {
       await upsertCoin(coin)
     }
     console.log(`Upserted ${coins.length} coins`)
 
-    // fetch missing candles for each coin
     const BATCH_SIZE = 10
     const BATCH_DELAY = 2000
     let candleCount = 0
@@ -67,28 +60,35 @@ export async function GET(request: NextRequest) {
 
     console.log(`Candles saved: ${candleCount}, errors: ${errorCount}`)
 
-    //  delete candles older than 60 days
     const deleted = await pool.query(`
       DELETE FROM ohlcv_data
       WHERE open_time < NOW() - INTERVAL '90 days'
     `)
     console.log(`Deleted ${deleted.rowCount} old candles`)
 
-    // recalculate all metrics
     console.log('Calculating metrics...')
     await calculateAllMetrics()
     console.log('Metrics calculated')
 
-    // update 1m candles for top 15 coins
-    console.log('Updating 1m candles for top 15...')
+    // ── Step 6: maintain 1m candles for top 10 (age + depth
+    // filtered, by score) PLUS any manually pinned coins ──
+    console.log('Updating 1m candles...')
     let new1mCandles = 0
     let new1mErrors = 0
 
     try {
-      const top15 = await getTop15Coins()
-      console.log(`Top 15: ${top15.map(c => c.symbol).join(', ')}`)
+      const top10 = await getTop10Coins()
+      const pinned = await getPinnedCoins()
 
-      for (const coin of top15) {
+      const maintainMap = new Map<string, ScreenerCrypto & { exchange: string }>()
+      for (const c of top10) maintainMap.set(c.coin_id, c)
+      for (const c of pinned) maintainMap.set(c.coin_id, c)
+      const toMaintain = Array.from(maintainMap.values())
+
+      console.log(`Top 10: ${top10.map(c => c.symbol).join(', ')}`)
+      console.log(`Pinned: ${pinned.map(c => c.symbol).join(', ') || 'none'}`)
+
+      for (const coin of toMaintain) {
         try {
           const { rows: existing } = await pool.query(
             `SELECT 1 FROM ohlcv_1m WHERE coin_id = $1 LIMIT 1`,
@@ -96,8 +96,8 @@ export async function GET(request: NextRequest) {
           )
 
           if (existing.length === 0) {
-            console.log(`${coin.symbol}: new to top 15, backfilling 60 days...`)
-            new1mCandles += await fetch60Days1m(coin.coin_id, coin.symbol, coin.exchange)
+            console.log(`${coin.symbol}: backfilling 60 days of 1m...`)
+            new1mCandles += await backfill1mCandles(coin.coin_id, coin.symbol, coin.exchange, 60)
           } else {
             new1mCandles += await fetchMissing1mCandles(coin.coin_id, coin.symbol, coin.exchange)
           }
@@ -108,10 +108,18 @@ export async function GET(request: NextRequest) {
         await sleep(150)
       }
 
+      // Actively prune anyone no longer in top 10 AND not pinned —
+      // don't wait up to 60 days for the age trim to catch rotation.
+      const keepIds = toMaintain.map(c => c.coin_id)
+      const pruned = keepIds.length > 0
+        ? await pool.query(`DELETE FROM ohlcv_1m WHERE coin_id != ALL($1)`, [keepIds])
+        : await pool.query(`DELETE FROM ohlcv_1m`)
+      console.log(`Pruned ${pruned.rowCount} rows for coins no longer tracked`)
+
       const deleted1m = await pool.query(`
         DELETE FROM ohlcv_1m WHERE open_time < NOW() - INTERVAL '60 days'
       `)
-      console.log(`1m candles added: ${new1mCandles}, trimmed: ${deleted1m.rowCount}, errors: ${new1mErrors}`)
+      console.log(`1m candles added: ${new1mCandles}, age-trimmed: ${deleted1m.rowCount}, errors: ${new1mErrors}`)
     } catch (err) {
       console.error('1m update step failed:', err)
     }
@@ -134,14 +142,9 @@ export async function GET(request: NextRequest) {
   }
 }
 
-async function fetchMissingCandles(
-  coin_id: string,
-  symbol: string
-): Promise<number> {
+async function fetchMissingCandles(coin_id: string, symbol: string): Promise<number> {
   const { rows } = await pool.query(`
-    SELECT
-      MAX(o.open_time) as last_time,
-      c.exchange
+    SELECT MAX(o.open_time) as last_time, c.exchange
     FROM ohlcv_data o
     JOIN cryptos c ON c.coin_id = o.coin_id
     WHERE o.coin_id = $1 AND o.interval = '5m'
@@ -165,15 +168,6 @@ async function fetchMissingCandles(
       }
       throw err
     }
-  }
-
-  function isDiskFullError(err: unknown): boolean {
-    return (
-      typeof err === 'object' &&
-      err !== null &&
-      'code' in err &&
-      (err as { code?: unknown }).code === '53100'
-    )
   }
 
   const lastTime = rows[0].last_time as Date
@@ -230,7 +224,15 @@ async function fetchMissingCandles(
   return inserted
 }
 
-//  Calculate metrics for all coins
+function isDiskFullError(err: unknown): boolean {
+  return (
+    typeof err === 'object' &&
+    err !== null &&
+    'code' in err &&
+    (err as { code?: unknown }).code === '53100'
+  )
+}
+
 async function calculateAllMetrics() {
   const { rows: coins } = await pool.query(
     'SELECT coin_id FROM cryptos ORDER BY market_cap_rank ASC'
@@ -259,12 +261,7 @@ async function calculateAllMetrics() {
 
         if (windowCandles.length === 0) continue
 
-        const metrics = calculateMetrics(
-          coin.coin_id,
-          intervalName,
-          windowCandles,
-          windowDays
-        )
+        const metrics = calculateMetrics(coin.coin_id, intervalName, windowCandles, windowDays)
 
         await pool.query(`
           INSERT INTO computed_metrics (
@@ -292,7 +289,6 @@ async function calculateAllMetrics() {
   }
 }
 
-//  Helper: upsert one coin
 async function upsertCoin(coin: CryptoRow) {
   await pool.query(`
     INSERT INTO cryptos (
@@ -316,8 +312,9 @@ async function upsertCoin(coin: CryptoRow) {
   ])
 }
 
-//  Get current top 15 coins by score
-async function getTop15Coins(): Promise<(ScreenerCrypto & { exchange: string })[]> {
+// ── Top 10 by score, age-filtered (>=30 days of 5m history),
+// verified to have 30+ days of real 1m depth before acceptance ──
+async function getTop10Coins(): Promise<(ScreenerCrypto & { exchange: string })[]> {
   const { rows } = await pool.query(`
     SELECT
       c.coin_id, c.symbol, c.name, c.image_url, c.current_price,
@@ -335,45 +332,64 @@ async function getTop15Coins(): Promise<(ScreenerCrypto & { exchange: string })[
   for (const row of rows) {
     if (!coinsMap.has(row.coin_id)) {
       coinsMap.set(row.coin_id, {
-        coin_id:         row.coin_id,
-        symbol:          row.symbol,
-        name:            row.name,
-        image_url:       row.image_url,
-        current_price:   row.current_price,
-        market_cap_rank: row.market_cap_rank,
-        market_cap:      row.market_cap,
-        total_volume:    row.total_volume,
-        exchange:        row.exchange,
-        metrics:         {},
+        coin_id: row.coin_id, symbol: row.symbol, name: row.name,
+        image_url: row.image_url, current_price: row.current_price,
+        market_cap_rank: row.market_cap_rank, market_cap: row.market_cap,
+        total_volume: row.total_volume, exchange: row.exchange,
+        metrics: {},
       })
     }
-
     const coin = coinsMap.get(row.coin_id)!
     coin.metrics[`${row.interval}_${row.window_days}`] = {
-      interval:            row.interval,
-      window_days:         row.window_days,
-      avg_amplitude:       row.avg_amplitude,
-      count_above_default: row.count_above_default,
-      avg_recovery_days:   row.avg_recovery_days,
-      max_drop:            row.max_drop,
-      net_var:             row.net_var,
-      actual_days:         row.actual_days,
+      interval: row.interval, window_days: row.window_days,
+      avg_amplitude: row.avg_amplitude, count_above_default: row.count_above_default,
+      avg_recovery_days: row.avg_recovery_days, max_drop: row.max_drop,
+      net_var: row.net_var, actual_days: row.actual_days,
     } as MetricSet
   }
 
-  return Array.from(coinsMap.values())
+  const MIN_AGE_DAYS = 30
+
+  const eligible = Array.from(coinsMap.values())
+    .filter(coin => (coin.metrics['5m_30']?.actual_days ?? 0) >= MIN_AGE_DAYS)
     .map(coin => ({ coin, score: calculateScore(coin) }))
     .sort((a, b) => b.score - a.score)
-    .slice(0, 15)
-    .map(c => c.coin)
+
+  const selected: (ScreenerCrypto & { exchange: string })[] = []
+  for (const { coin } of eligible) {
+    if (selected.length >= 10) break
+    const hasDepth = await has1mDepth(coin.coin_id, coin.exchange)
+    if (hasDepth) {
+      selected.push(coin)
+    } else {
+      console.log(`${coin.symbol}: scored well but 1m history doesn't reach 30 days, skipping`)
+    }
+    await sleep(100)
+  }
+
+  return selected
 }
 
-//  Incremental 1m update (small, daily top-up)
-async function fetchMissing1mCandles(
-  coin_id: string,
-  symbol: string,
-  exchange: string
-): Promise<number> {
+// ── Manually pinned coins — the 5-coin cap is enforced at pin
+// time (see app/api/backtest-coins/pin/route.ts), not here ──
+async function getPinnedCoins(): Promise<(ScreenerCrypto & { exchange: string })[]> {
+  const { rows } = await pool.query(`
+    SELECT c.coin_id, c.symbol, c.name, c.image_url, c.current_price,
+           c.market_cap_rank, c.market_cap, c.total_volume, c.exchange
+    FROM pinned_backtest_coins p
+    JOIN cryptos c ON c.coin_id = p.coin_id
+  `)
+
+  return rows.map(row => ({
+    coin_id: row.coin_id, symbol: row.symbol, name: row.name,
+    image_url: row.image_url, current_price: row.current_price,
+    market_cap_rank: row.market_cap_rank, market_cap: row.market_cap,
+    total_volume: row.total_volume, exchange: row.exchange,
+    metrics: {},
+  }))
+}
+
+async function fetchMissing1mCandles(coin_id: string, symbol: string, exchange: string): Promise<number> {
   const { rows } = await pool.query(
     `SELECT MAX(open_time) as last_time FROM ohlcv_1m WHERE coin_id = $1`,
     [coin_id]
@@ -407,67 +423,6 @@ async function fetchMissing1mCandles(
   }
 
   return inserted
-}
-
-//  Full 60-day backfill
-async function fetch60Days1m(
-  coin_id: string,
-  symbol: string,
-  exchange: string
-): Promise<number> {
-  const TOTAL_CANDLES = 60 * 1440
-  const PER_REQUEST = 1000
-  const useBinance = exchange !== 'gate'
-  const now = Date.now()
-  const requests = Math.ceil(TOTAL_CANDLES / PER_REQUEST)
-
-  let inserted = 0
-  for (let i = 0; i < requests; i++) {
-    const startTime = now - ((i + 1) * PER_REQUEST * 60 * 1000)
-
-    let candles = await fetchCandlesKucoin(symbol, '1min', PER_REQUEST, startTime)
-    if (candles.length === 0) {
-      candles = useBinance
-        ? await fetchCandles(symbol, '1m', PER_REQUEST, startTime)
-        : await fetchCandlesGate(symbol, '1m', PER_REQUEST, startTime)
-    }
-    if (candles.length === 0) {
-      await sleep(150)
-      continue
-    }
-
-    inserted += await insert1mCandles(coin_id, candles)
-    if ((i + 1) % 20 === 0) console.log(`  ${symbol}: ${i + 1}/${requests} requests done`)
-    await sleep(150)
-  }
-
-  return inserted
-}
-
-//  Shared insert helper for ohlcv_1m
-async function insert1mCandles(coin_id: string, candles: OhlcvRow[]): Promise<number> {
-  const values: (string | number | Date)[] = []
-  const placeholders: string[] = []
-
-  candles.forEach((candle, idx) => {
-    const base = idx * 7
-    placeholders.push(
-      `($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7})`
-    )
-    values.push(
-      coin_id, candle.open_time,
-      candle.open, candle.high, candle.low,
-      candle.close, candle.volume,
-    )
-  })
-
-  await pool.query(`
-    INSERT INTO ohlcv_1m (coin_id, open_time, open, high, low, close, volume)
-    VALUES ${placeholders.join(',')}
-    ON CONFLICT (coin_id, open_time) DO NOTHING
-  `, values)
-
-  return candles.length
 }
 
 function sleep(ms: number): Promise<void> {

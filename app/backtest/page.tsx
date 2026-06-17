@@ -16,6 +16,13 @@ interface CoinOption {
   days_span:    number
   candle_count: number
   limited_data: boolean
+  pinned:       boolean
+}
+
+interface PickableCoin {
+  coin_id: string
+  symbol:  string
+  name:    string
 }
 
 // Standard params used for the quick per-coin weekly scan
@@ -52,6 +59,14 @@ export default function BacktestPage() {
   // Per-coin quick weekly scan (for dropdown)
   // undefined/missing = not started yet, null = failed, number = pnl_pct
   const [weeklyScanResults, setWeeklyScanResults] = useState<Record<string, number | null>>({})
+
+  // Manual pin/unpin/replace state
+  const [pinnedError, setPinnedError] = useState<string | null>(null)
+  const [pinning, setPinning] = useState(false)
+  const [pickerCoins, setPickerCoins] = useState<PickableCoin[]>([])
+  const [pickerOpen, setPickerOpen] = useState(false)
+  const [pickerQuery, setPickerQuery] = useState('')
+  const [replacingCoinId, setReplacingCoinId] = useState<string | null>(null)
 
   // Load available coins
   useEffect(() => {
@@ -154,6 +169,78 @@ export default function BacktestPage() {
     if (val === undefined) return '...'
     if (val === null) return 'err'
     return `${val >= 0 ? '+' : ''}${val.toFixed(1)}%`
+  }
+
+  // ── Manual pin/unpin/replace ───────────────────────────────
+  const refreshCoins = async () => {
+    const res = await fetch('/api/backtest-coins')
+    const data = await res.json()
+    if (data.success) setCoins(data.coins)
+  }
+
+  const openPicker = async (replaceCoinId: string | null = null) => {
+    setReplacingCoinId(replaceCoinId)
+    setPinnedError(null)
+    setPickerOpen(true)
+    if (pickerCoins.length === 0) {
+      try {
+        const res = await fetch('/api/cryptos')
+        const data = await res.json()
+        if (data.success) {
+          setPickerCoins(
+            data.coins.map((c: PickableCoin) => ({
+              coin_id: c.coin_id,
+              symbol:  c.symbol,
+              name:    c.name,
+            }))
+          )
+        }
+      } catch {
+        // picker just stays empty, user can retry by reopening
+      }
+    }
+  }
+
+  const pinCoin = async (coin_id: string) => {
+    setPinning(true)
+    setPinnedError(null)
+    try {
+      const res = await fetch('/api/backtest-coins/pin', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ coin_id, replace_coin_id: replacingCoinId ?? undefined }),
+      })
+      const data = await res.json()
+      if (!data.success) {
+        setPinnedError(data.error || 'Failed to pin coin')
+        return
+      }
+      setPickerOpen(false)
+      setReplacingCoinId(null)
+      await refreshCoins()
+    } catch (err) {
+      setPinnedError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setPinning(false)
+    }
+  }
+
+  const unpinCoin = async (coin_id: string) => {
+    setPinning(true)
+    setPinnedError(null)
+    try {
+      const res = await fetch(`/api/backtest-coins/pin?coin_id=${coin_id}`, { method: 'DELETE' })
+      const data = await res.json()
+      if (!data.success) {
+        setPinnedError(data.error || 'Failed to remove pin')
+        return
+      }
+      await refreshCoins()
+    } catch (err) {
+      setPinnedError(err instanceof Error ? err.message : 'Unknown error')
+    } finally {
+      setPinning(false)
+    }
   }
 
   // minimum capital calculation
@@ -287,6 +374,13 @@ export default function BacktestPage() {
   // group coins for the dropdown
   const fullDataCoins    = coins.filter(c => !c.limited_data)
   const limitedDataCoins = coins.filter(c => c.limited_data)
+  const pinnedCoins       = coins.filter(c => c.pinned)
+
+  const filteredPickerCoins = pickerCoins.filter(c =>
+    pickerQuery === '' ||
+    c.symbol.toLowerCase().includes(pickerQuery.toLowerCase()) ||
+    c.name.toLowerCase().includes(pickerQuery.toLowerCase())
+  )
 
   return (
     <div className="min-h-screen bg-gray-50 p-6">
@@ -312,6 +406,58 @@ export default function BacktestPage() {
           </p>
         </div>
 
+        {/* Pinned coins */}
+        <div className="bg-white rounded-lg shadow p-4 mb-6">
+          <div className="flex items-center justify-between mb-2">
+            <h2 className="text-sm font-medium text-gray-700">
+              Manually pinned coins ({pinnedCoins.length}/5)
+            </h2>
+            {pinnedCoins.length < 5 && (
+              <button
+                onClick={() => openPicker(null)}
+                className="text-sm text-blue-600 hover:text-blue-800"
+              >
+                + Pin a coin
+              </button>
+            )}
+          </div>
+
+          {pinnedCoins.length === 0 ? (
+            <p className="text-xs text-gray-400">
+              No coins pinned — the dropdown below only shows the automatic top 10 by score.
+            </p>
+          ) : (
+            <div className="flex flex-wrap gap-2">
+              {pinnedCoins.map(c => (
+                <div
+                  key={c.coin_id}
+                  className="flex items-center gap-2 bg-gray-50 border border-gray-200 rounded px-3 py-1.5 text-sm"
+                >
+                  <span className="font-medium text-gray-900">{c.symbol}</span>
+                  <span className="text-gray-400">({c.days_span}d)</span>
+                  <button
+                    onClick={() => openPicker(c.coin_id)}
+                    className="text-blue-600 hover:text-blue-800 text-xs"
+                  >
+                    change
+                  </button>
+                  <button
+                    onClick={() => unpinCoin(c.coin_id)}
+                    disabled={pinning}
+                    className="text-red-600 hover:text-red-800 text-xs disabled:opacity-50"
+                  >
+                    remove
+                  </button>
+                </div>
+              ))}
+            </div>
+          )}
+
+          {pinnedError && !pickerOpen && (
+            <div className="mt-2 text-xs text-red-600">{pinnedError}</div>
+          )}
+        </div>
+
         {/* Params form */}
         <div className="bg-white rounded-lg shadow p-4 mb-6">
           <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
@@ -329,14 +475,14 @@ export default function BacktestPage() {
                 <optgroup label="Full history (~60 days)">
                   {fullDataCoins.map(c => (
                     <option key={c.coin_id} value={c.coin_id}>
-                      {c.symbol} — {c.name} ({c.days_span}d)  •  {formatScanResult(c.coin_id)}
+                      {c.pinned ? '📌 ' : ''}{c.symbol} — {c.name} ({c.days_span}d)  •  {formatScanResult(c.coin_id)}
                     </option>
                   ))}
                 </optgroup>
                 <optgroup label="Limited history (~6 days)">
                   {limitedDataCoins.map(c => (
                     <option key={c.coin_id} value={c.coin_id}>
-                      {c.symbol} — {c.name} ({c.days_span}d)  •  {formatScanResult(c.coin_id)}
+                      {c.pinned ? '📌 ' : ''}{c.symbol} — {c.name} ({c.days_span}d)  •  {formatScanResult(c.coin_id)}
                     </option>
                   ))}
                 </optgroup>
@@ -840,6 +986,48 @@ export default function BacktestPage() {
         )}
 
       </div>
+
+      {/* Coin picker modal */}
+      {pickerOpen && (
+        <div
+          className="fixed inset-0 flex items-center justify-center z-50"
+          style={{ backgroundColor: 'rgba(0, 0, 0, 0.5)' }}
+          onClick={() => setPickerOpen(false)}
+        >
+          <div
+            className="bg-white rounded-lg shadow-xl p-4 max-w-md w-full mx-4"
+            onClick={(e) => e.stopPropagation()}
+          >
+            <h3 className="text-sm font-medium text-gray-900 mb-2">
+              {replacingCoinId ? 'Replace pinned coin' : 'Pin a coin'}
+            </h3>
+            <input
+              type="text"
+              placeholder="Search by symbol or name..."
+              value={pickerQuery}
+              onChange={(e) => setPickerQuery(e.target.value)}
+              className="w-full border border-gray-300 rounded px-3 py-2 text-sm mb-2"
+              autoFocus
+            />
+            <div className="max-h-64 overflow-y-auto divide-y divide-gray-100">
+              {filteredPickerCoins.slice(0, 50).map(c => (
+                <button
+                  key={c.coin_id}
+                  onClick={() => pinCoin(c.coin_id)}
+                  disabled={pinning}
+                  className="w-full text-left px-2 py-2 text-sm hover:bg-gray-50 disabled:opacity-50"
+                >
+                  <span className="font-medium text-gray-900">{c.symbol}</span>{' '}
+                  <span className="text-gray-500">{c.name}</span>
+                </button>
+              ))}
+            </div>
+            {pinnedError && (
+              <div className="mt-2 text-xs text-red-600">{pinnedError}</div>
+            )}
+          </div>
+        </div>
+      )}
     </div>
   )
 }

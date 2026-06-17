@@ -248,3 +248,87 @@ export async function backfillCandles(
 
   return inserted
 }
+
+// Probe whether 1m data actually exists this far back
+export async function has1mDepth(
+  symbol: string,
+  exchange: string,
+  days: number = 30
+): Promise<boolean> {
+  const targetTime = Date.now() - days * 24 * 60 * 60 * 1000
+  const TOLERANCE_MS = 24 * 60 * 60 * 1000
+  const useBinance = exchange !== 'gate'
+
+  let candles = await fetchCandlesKucoin(symbol, '1min', 5, targetTime)
+  if (candles.length === 0) {
+    candles = useBinance
+      ? await fetchCandles(symbol, '1m', 5, targetTime)
+      : await fetchCandlesGate(symbol, '1m', 5, targetTime)
+  }
+
+  if (candles.length === 0) return false
+
+  const earliest = candles[0].open_time.getTime()
+  return earliest <= targetTime + TOLERANCE_MS
+}
+
+// Shared insert helper for ohlcv_1m
+export async function insert1mCandles(coin_id: string, candles: OhlcvRow[]): Promise<number> {
+  const values: (string | number | Date)[] = []
+  const placeholders: string[] = []
+
+  candles.forEach((candle, idx) => {
+    const base = idx * 7
+    placeholders.push(
+      `($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7})`
+    )
+    values.push(
+      coin_id, candle.open_time,
+      candle.open, candle.high, candle.low,
+      candle.close, candle.volume,
+    )
+  })
+
+  await pool.query(`
+    INSERT INTO ohlcv_1m (coin_id, open_time, open, high, low, close, volume)
+    VALUES ${placeholders.join(',')}
+    ON CONFLICT (coin_id, open_time) DO NOTHING
+  `, values)
+
+  return candles.length
+}
+
+// Full N-day backfill for one coin's 1m candles
+export async function backfill1mCandles(
+  coin_id: string,
+  symbol: string,
+  exchange: string,
+  days: number = 60
+): Promise<number> {
+  const TOTAL_CANDLES = days * 1440
+  const PER_REQUEST = 1000
+  const useBinance = exchange !== 'gate'
+  const now = Date.now()
+  const requests = Math.ceil(TOTAL_CANDLES / PER_REQUEST)
+
+  let inserted = 0
+  for (let i = 0; i < requests; i++) {
+    const startTime = now - ((i + 1) * PER_REQUEST * 60 * 1000)
+
+    let candles = await fetchCandlesKucoin(symbol, '1min', PER_REQUEST, startTime)
+    if (candles.length === 0) {
+      candles = useBinance
+        ? await fetchCandles(symbol, '1m', PER_REQUEST, startTime)
+        : await fetchCandlesGate(symbol, '1m', PER_REQUEST, startTime)
+    }
+    if (candles.length === 0) {
+      await sleep(150)
+      continue
+    }
+
+    inserted += await insert1mCandles(coin_id, candles)
+    await sleep(150)
+  }
+
+  return inserted
+}
