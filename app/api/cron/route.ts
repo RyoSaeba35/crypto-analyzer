@@ -164,14 +164,23 @@ async function fetchMissingCandles(
     console.log(`${symbol}: no existing 5m data, running full backfill...`)
     try {
       return await backfillCandles(coin_id, symbol, 60)
-    } catch (err: any) {
-      if (err?.code === '53100') {
+    } catch (err: unknown) {
+      if (isDiskFullError(err)) {
         diskFull = true
         console.error(`Database out of disk space — stopping new-coin backfills for this run`)
         return 0
       }
       throw err
     }
+  }
+
+  function isDiskFullError(err: unknown): boolean {
+    return (
+      typeof err === 'object' &&
+      err !== null &&
+      'code' in err &&
+      (err as { code?: unknown }).code === '53100'
+    )
   }
 
   const lastTime = rows[0].last_time as Date
