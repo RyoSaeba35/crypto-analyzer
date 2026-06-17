@@ -2,16 +2,16 @@
 // Runs daily — fetches missing candles since last DB entry
 // Self-healing — works even if cron missed several days
 //
-// Also maintains 1m candle data (ohlcv_1m) for the top 25
+// Also maintains 1m candle data (ohlcv_1m) for the top 15
 // coins by score, used by the backtester. New entrants to
-// the top 25 get a full 60-day backfill; existing ones get
+// the top 15 get a full 60-day backfill; existing ones get
 // a cheap incremental top-up. Data is trimmed to 60 days.
 
 import pool from '@/lib/db'
 import { NextRequest } from 'next/server'
 import {
   fetchTopCoins, fetchCandles, fetchCandlesGate, fetchCandlesKucoin,
-  backfillCandles90d
+  backfillCandles
 } from '@/lib/exchanges'
 import { calculateScore } from '@/lib/scoring'
 import { CryptoRow, OhlcvRow, ScreenerCrypto, MetricSet } from '@/types'
@@ -21,6 +21,7 @@ import {
   INTERVAL_GROUPS
 } from '@/lib/analysis'
 
+let diskFull = false
 
 export async function GET(request: NextRequest) {
   //  Auth check
@@ -49,8 +50,7 @@ export async function GET(request: NextRequest) {
     const BATCH_DELAY = 2000
     let candleCount = 0
     let errorCount = 0
-    let diskFull = false
-
+    diskFull = false
 
     for (let i = 0; i < coins.length; i += BATCH_SIZE) {
       const batch = coins.slice(i, i + BATCH_SIZE)
@@ -85,16 +85,16 @@ export async function GET(request: NextRequest) {
     await calculateAllMetrics()
     console.log('Metrics calculated')
 
-    //  Step 6: update 1m candles for top 25 coins ─
-    console.log('Updating 1m candles for top 25...')
+    //  Step 6: update 1m candles for top 15 coins ─
+    console.log('Updating 1m candles for top 15...')
     let new1mCandles = 0
     let new1mErrors = 0
 
     try {
-      const top25 = await getTop25Coins()
-      console.log(`Top 25: ${top25.map(c => c.symbol).join(', ')}`)
+      const top15 = await getTop15Coins()
+      console.log(`Top 15: ${top15.map(c => c.symbol).join(', ')}`)
 
-      for (const coin of top25) {
+      for (const coin of top15) {
         try {
           const { rows: existing } = await pool.query(
             `SELECT 1 FROM ohlcv_1m WHERE coin_id = $1 LIMIT 1`,
@@ -102,7 +102,7 @@ export async function GET(request: NextRequest) {
           )
 
           if (existing.length === 0) {
-            console.log(`${coin.symbol}: new to top 25, backfilling 60 days...`)
+            console.log(`${coin.symbol}: new to top 15, backfilling 60 days...`)
             new1mCandles += await fetch60Days1m(coin.coin_id, coin.symbol, coin.exchange)
           } else {
             new1mCandles += await fetchMissing1mCandles(coin.coin_id, coin.symbol, coin.exchange)
@@ -317,10 +317,10 @@ async function upsertCoin(coin: CryptoRow) {
   ])
 }
 
-//  Get current top 25 coins by score─
+//  Get current top 15 coins by score─
 // Same shape/scoring as /api/cryptos + lib/scoring, used to
 // decide which coins get 1m data maintained in ohlcv_1m.
-async function getTop25Coins(): Promise<(ScreenerCrypto & { exchange: string })[]> {
+async function getTop15Coins(): Promise<(ScreenerCrypto & { exchange: string })[]> {
   const { rows } = await pool.query(`
     SELECT
       c.coin_id, c.symbol, c.name, c.image_url, c.current_price,
@@ -367,7 +367,7 @@ async function getTop25Coins(): Promise<(ScreenerCrypto & { exchange: string })[
   return Array.from(coinsMap.values())
     .map(coin => ({ coin, score: calculateScore(coin) }))
     .sort((a, b) => b.score - a.score)
-    .slice(0, 25)
+    .slice(0, 15)
     .map(c => c.coin)
 }
 
@@ -414,7 +414,7 @@ async function fetchMissing1mCandles(
   return inserted
 }
 
-//  Full 60-day backfill (for new top-25 entrants)
+//  Full 60-day backfill (for new top-15 entrants)
 async function fetch60Days1m(
   coin_id: string,
   symbol: string,

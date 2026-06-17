@@ -186,13 +186,13 @@ export async function fetchCandlesKucoin(
   })).reverse()
 }
 
-export async function backfillCandles90d(
+export async function backfillCandles(
   coin_id: string,
-  symbol: string
+  symbol: string,
+  days: number = 90
 ): Promise<number> {
-  const DAYS = 90
   const CANDLES_PER_DAY = 288
-  const TOTAL_CANDLES = DAYS * CANDLES_PER_DAY
+  const TOTAL_CANDLES = days * CANDLES_PER_DAY
   const PER_REQUEST = 1000
 
   const testCandles = await fetchCandles(symbol, '5m', 1)
