@@ -28,6 +28,54 @@ export function recencyFactor(coin: Coin, windowDays: number = 30): number {
   return Math.min(1, avgRatio + 0.3)
 }
 
+// ── 90-day trend snapshot ──────────────────────────────────
+// Pulls the two numbers everything below is built on, so they're
+// only read from coin.metrics in one place.
+
+function trend90(coin: Coin): { netVar90: number; maxDrop90: number } {
+  const m90 = coin.metrics['5m_90']
+  return {
+    netVar90:  m90?.net_var  ?? 0,
+    maxDrop90: m90?.max_drop ?? 0,
+  }
+}
+
+// ── High-risk detection ────────────────────────────────────
+// True if 90-day price action signals death-spiral risk. Two cases:
+//   1. Sustained decline — net_var90 is just deeply negative.
+//   2. Crashed from a recent peak but net_var still looks flat —
+//      the case net_var alone misses. A coin that pumped hard and
+//      then gave most of it back can land back near its starting
+//      price, so net_var reads near zero even though max_drop shows
+//      it fell off a cliff partway through the window — exactly
+//      the H situation, if the 90d window start predates the pump.
+
+export function isHighRisk(coin: Coin): boolean {
+  const { netVar90, maxDrop90 } = trend90(coin)
+  const sustainedDecline = netVar90 < -20
+  const crashedFromHigh  = maxDrop90 < -50 && netVar90 > -20
+  return sustainedDecline || crashedFromHigh
+}
+
+// ── Trend penalty ───────────────────────────────────────────
+// Two multiplicative factors over the 90-day window:
+//   - netVarPenalty: punishes large net displacement in either
+//     direction — range-bound is the bot-friendly sweet spot.
+//   - drawdownPenalty: punishes a severe peak-to-trough crash even
+//     when net_var looks flat (see isHighRisk for why net_var alone
+//     isn't enough).
+// Divisors (150, 60) are starting points — worth tuning once we
+// check this against a few more real coins, H included.
+
+export function trendPenalty(coin: Coin): number {
+  const { netVar90, maxDrop90 } = trend90(coin)
+
+  const netVarPenalty   = Math.max(0.2,  1 - Math.abs(netVar90)  / 150)
+  const drawdownPenalty = Math.max(0.15, 1 - Math.abs(maxDrop90) / 60)
+
+  return netVarPenalty * drawdownPenalty
+}
+
 // ── Score calculation ────────────────────────────────────
 // Pure function — takes a coin, returns a composite score
 // Higher score = better DCA bot candidate
@@ -57,10 +105,7 @@ export function calculateScore(
     1 - (m5m.avg_recovery_days / recoveryTolerance)
   )
 
-  const netVar90 = coin.metrics['5m_90']?.net_var ?? 0
-  const trendPenalty = Math.max(0.2, 1 - Math.abs(netVar90) / 150)
-
-  return composite * recoveryFactor * trendPenalty * recencyFactor(coin, windowDays)
+  return composite * recoveryFactor * trendPenalty(coin) * recencyFactor(coin, windowDays)
 }
 
 // ── Score color ───────────────────────────────────────────
@@ -78,8 +123,11 @@ export function trendLabel(coin: Coin): {
   emoji: string
   className: string
 } {
-  const netVar90 = coin.metrics['5m_90']?.net_var ?? 0
+  const { netVar90, maxDrop90 } = trend90(coin)
 
+  if (maxDrop90 < -50 && netVar90 > -20) {
+    return { label: 'Crashed from high', emoji: '🕳️', className: 'text-red-600' }
+  }
   if (netVar90 < -20) {
     return { label: 'Declining', emoji: '📉', className: 'text-red-600' }
   }

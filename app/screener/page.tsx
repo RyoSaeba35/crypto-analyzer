@@ -5,7 +5,7 @@ import Image from 'next/image'
 import Link from 'next/link'
 import { useRouter, useSearchParams } from 'next/navigation'
 import type { ScreenerCrypto as Coin, MetricSet } from '@/types'
-import { calculateScore, scoreColor, trendLabel } from '@/lib/scoring'
+import { calculateScore, scoreColor, trendLabel, isHighRisk } from '@/lib/scoring'
 
 // ── Types ─────────────────────────────────────────────────
 
@@ -152,7 +152,7 @@ function ScreenerContent() {
     const volumeOk = showLowVolume || coin.total_volume >= minVolume
     const ageOk = showNewCoins || (coin.metrics['5m_90']?.actual_days ?? 0) >= minAge
     const netVar90 = coin.metrics['5m_90']?.net_var ?? 0
-    const trendOk = !hideDeclining || netVar90 >= -20
+    const trendOk = !hideDeclining || !isHighRisk(coin)
     return volumeOk && ageOk && trendOk
   })
 
@@ -270,7 +270,7 @@ function ScreenerContent() {
                   checked={hideDeclining}
                   onChange={(e) => setHideDeclining(e.target.checked)}
                 />
-                Hide declining coins (90d trend &lt; -20%)
+                Hide declining coins (sustained downtrend or crashed from a recent high)
               </label>
             </div>
           )}

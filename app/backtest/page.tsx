@@ -28,7 +28,6 @@ export default function BacktestPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
 
-  // Form state
   const [coinId, setCoinId]       = useState('')
   const [dateFrom, setDateFrom]   = useState('')
   const [dateTo, setDateTo]       = useState('')
@@ -38,17 +37,13 @@ export default function BacktestPage() {
   const [multiplier, setMultiplier] = useState(1.3)
   const [capital, setCapital] = useState<number | ''>('')
   const [stopLoss, setStopLoss] = useState<number | ''>('')
-  // stored as a percentage in the UI (e.g. 0.097 for 0.097%), converted to
-  // a decimal fraction on submit. Defaults to Gate's standard spot fee.
   const [feeRate, setFeeRate] = useState<number | ''>(0.097)
 
-  // Run state
   const [running, setRunning]     = useState(false)
   const [result, setResult]       = useState<BacktestResult | null>(null)
   const [runError, setRunError]   = useState<string | null>(null)
   const [showAllCycles, setShowAllCycles] = useState(false)
 
-  // Weekly breakdown state
   const [weeklyResults, setWeeklyResults] = useState<BacktestResult[] | null>(null)
   const [weeklyRunning, setWeeklyRunning] = useState(false)
   const [weeklyProgress, setWeeklyProgress] = useState(0)
@@ -87,8 +82,7 @@ export default function BacktestPage() {
     fetchCoins()
   }, [])
 
-  // Progressive scan: run a quick last-7-days backtest at
-  // standard params for every coin, to populate the dropdown
+  // run a last-7-days backtest
   useEffect(() => {
     if (coins.length === 0) return
 
@@ -140,7 +134,7 @@ export default function BacktestPage() {
     return () => { cancelled = true }
   }, [coins])
 
-  // When coin changes, reset date range to its bounds
+  // When coin changes, reset date range
   const handleCoinChange = (newCoinId: string) => {
     setCoinId(newCoinId)
     const coin = coins.find(c => c.coin_id === newCoinId)
@@ -155,7 +149,6 @@ export default function BacktestPage() {
     }
   }
 
-  // Format a coin's quick scan result for the dropdown
   const formatScanResult = (coinId: string): string => {
     const val = weeklyScanResults[coinId]
     if (val === undefined) return '...'
@@ -163,7 +156,7 @@ export default function BacktestPage() {
     return `${val >= 0 ? '+' : ''}${val.toFixed(1)}%`
   }
 
-  // Live minimum capital calculation
+  // minimum capital calculation
   const totalOrders = maxOrders + 1
   const minCapital = multiplier === 1
     ? totalOrders  // n equal-sized orders, each >= 1 USDT -> capital >= n
@@ -195,7 +188,7 @@ export default function BacktestPage() {
           max_orders: maxOrders,
           tp_target:  tpTarget,
           multiplier,
-          capital,  // now narrowed to `number` by the guard above
+          capital,
           stop_loss_pct: stopLoss === '' ? undefined : stopLoss,
           fee_rate: feeRate === '' ? undefined : feeRate / 100,
         }),
@@ -216,7 +209,7 @@ export default function BacktestPage() {
     }
   }
 
-  // Run the weekly breakdown
+  // Run the weekly
   const runWeeklyBreakdown = async () => {
     if (capital === '' || capitalTooLow || !coinId || !dateTo) return
 

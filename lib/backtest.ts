@@ -1,41 +1,14 @@
 // lib/backtest.ts
-// Pure DCA bot cycle simulator — no DB, no API calls.
-// Walks through 1m candles chronologically and simulates
-// the bot's behavior per the rules derived from the live
-// Gate.io bot screenshots and Gate's official Spot Martingale
-// documentation.
-//
-// Capital compounds: profit (or loss) from each closed
-// cycle is added to the capital base used to size the
-// NEXT cycle's orders.
-//
-// "max_orders" follows Gate's convention: it's the number of
-// ADDITIONAL DCA orders after the initial order. Total orders
-// per cycle = max_orders + 1.
-//
-// TP price formula matches Gate's documented Spot Martingale
-// behavior exactly:
-//   TP Price = avg_entry * (1 + tp_target% + 0.1%) / (1 - fee_rate)
-// The +0.1% is Gate's fixed safety buffer (not fee-dependent).
-// fee_rate defaults to 0.097% (0.00097), Gate's standard spot
-// maker/taker fee, but can be overridden per BacktestParams.
-//
-// Optional stop_loss_pct: if the price drops to
-// avg_entry * (1 - stop_loss_pct/100), the cycle closes at
-// a loss ("stopped_out") instead of waiting for TP.
-//
-// If, after a loss, currentCapital shrinks enough that
-// order1Size would fall below 1 USDT, the bot can no longer
-// place a valid first order — simulation stops early and
-// bot_died is set to true.
+// DCA bot cycle simulator.
+// TP price formula : TP Price = avg_entry * (1 + tp_target% + 0.1%) / (1 - fee_rate)
 
 import type { OhlcvRow, BacktestParams, BacktestCycle, BacktestOrder, BacktestResult } from '@/types'
 
-const MIN_ORDER_SIZE = 1 // USDT — matches exchange minimum order size assumption
-const DEFAULT_FEE_RATE = 0.00097 // 0.097% — Gate spot maker/taker fee
-const TP_SAFETY_BUFFER = 0.001 // Gate's fixed +0.1% buffer in the TP formula
+const MIN_ORDER_SIZE = 1 // minimum order size
+const DEFAULT_FEE_RATE = 0.00097
+const TP_SAFETY_BUFFER = 0.001 // Gate's fixed +0.1% buffer
 
-// ── Order 1 size from capital ──────────────────────────────
+//  Order 1 size from capital
 // capital = order1 * (1 + mult + mult^2 + ... + mult^(n-1))
 //         = order1 * (mult^n - 1)/(mult - 1)   for mult != 1
 //         = order1 * n                          for mult == 1
@@ -46,7 +19,7 @@ function computeOrder1Size(capital: number, multiplier: number, totalOrders: num
   return capital * (multiplier - 1) / (Math.pow(multiplier, totalOrders) - 1)
 }
 
-// ── TP price from average entry, matching Gate's documented
+//  TP price from average entry, matching Gate's documented
 //    Spot Martingale formula:
 //    TP Price = avg_entry * (1 + tp_target% + 0.1%) / (1 - fee_rate)
 function computeTpPrice(avgEntry: number, tpTargetPct: number, feeRate: number): number {
@@ -61,10 +34,10 @@ export function runBacktest(
   const { deviation, max_orders, tp_target, multiplier, capital, stop_loss_pct, fee_rate } = params
   const feeRate = fee_rate ?? DEFAULT_FEE_RATE
 
-  // ── Total orders per cycle = 1 initial + max_orders DCA orders ──
+  //  Total orders per cycle = 1 initial + max_orders DCA orders
   const totalOrders = max_orders + 1
 
-  // ── Compounding capital state ───────────────────────────
+  //  Compounding capital state
   // order1Size is recalculated at the start of every cycle
   // from currentCapital, so profits/losses feed forward.
   let currentCapital = capital
@@ -72,7 +45,7 @@ export function runBacktest(
 
   const cycles: BacktestCycle[] = []
 
-  // ── Current cycle state ──────────────────────────────────
+  //  Current cycle state
   let cycleNum = 1
   let orders: BacktestOrder[] = []
   let nextTriggerPrice = 0   // price at which the NEXT order fills
@@ -124,7 +97,7 @@ export function runBacktest(
 
     const candle = candles[idx]
 
-    // ── Step 1: fill any pending DCA orders (price moved down) ──
+    //  Step 1: fill any pending DCA orders (price moved down)
     while (
       orders.length < totalOrders &&
       candle.low <= nextTriggerPrice
@@ -151,7 +124,7 @@ export function runBacktest(
       nextTriggerPrice = fillPrice * (1 - deviation / 100)
     }
 
-    // ── Step 2a: check stop-loss (price crashed below threshold) ──
+    //  Step 2a: check stop-loss (price crashed below threshold)
     if (stopLossPrice !== null && candle.low <= stopLossPrice) {
       const totalAmount = orders.reduce((sum, o) => sum + o.amount, 0)
       const totalCost   = orders.reduce((sum, o) => sum + o.price * o.amount, 0)
@@ -160,7 +133,7 @@ export function runBacktest(
       const durationHours =
         (candle.open_time.getTime() - new Date(cycleStartTime).getTime()) / (1000 * 60 * 60)
 
-      // ── Compound: loss feeds into capital for next cycle ──
+      //  Compound: loss feeds into capital for next cycle
       currentCapital += profit
 
       cycles.push({
@@ -184,7 +157,7 @@ export function runBacktest(
         break
       }
 
-    // ── Step 2b: check take-profit (price moved up) ──────────
+    //  Step 2b: check take-profit (price moved up)
     } else if (candle.high >= tpPrice) {
       const totalAmount = orders.reduce((sum, o) => sum + o.amount, 0)
       const totalCost   = orders.reduce((sum, o) => sum + o.price * o.amount, 0)
@@ -193,7 +166,7 @@ export function runBacktest(
       const durationHours =
         (candle.open_time.getTime() - new Date(cycleStartTime).getTime()) / (1000 * 60 * 60)
 
-      // ── Compound: profit feeds into capital for next cycle ──
+      //  Compound: profit feeds into capital for next cycle
       currentCapital += profit
 
       cycles.push({
@@ -222,7 +195,7 @@ export function runBacktest(
     }
   }
 
-  // ── Handle a cycle still open at the end of the period ────
+  //  Handle a cycle still open at the end of the period
   let finalState: BacktestResult['final_state']
 
   const lastCycleClosed = cycles.length > 0 && cycles[cycles.length - 1].cycle_num === cycleNum - 1
@@ -246,8 +219,8 @@ export function runBacktest(
       close_price:    lastCandle.close,
       profit,
       duration_hours: durationHours,
-      status:         'open_at_end',  // not "stuck" — just ran out of data
-      capital_after:  currentCapital + profit,  // hypothetical if sold now
+      status:         'open_at_end',
+      capital_after:  currentCapital + profit,
     })
 
     // next buy trigger prices for the open cycle
@@ -279,7 +252,6 @@ export function runBacktest(
     }
   }
 
-  // ── Summary stats ──────────────────────────────────────
   const cyclesCompleted  = cycles.filter(c => c.status === 'closed').length
   const cyclesStuck      = cycles.filter(c => c.status === 'open_at_end').length
   const cyclesStoppedOut = cycles.filter(c => c.status === 'stopped_out').length
@@ -296,7 +268,6 @@ export function runBacktest(
     0
   )
 
-  // ── Max drawdown: largest peak-to-trough drop in capital_after ──
   let peak = capital
   let maxDrawdown = 0
   let maxDrawdownPct = 0
@@ -313,14 +284,14 @@ export function runBacktest(
   }
 
   return {
-    coin_id:    '',  // filled in by the API route
+    coin_id:    '',
     date_from:  candles[0].open_time.toISOString(),
     date_to:    candles[candles.length - 1].open_time.toISOString(),
     params,
     total_pnl:        totalPnl,
     total_pnl_pct:    totalPnlPct,
     capital_start:    capital,
-    capital_end:      currentCapital,  // reflects compounding
+    capital_end:      currentCapital,
     cycles_completed: cyclesCompleted,
     cycles_stuck:     cyclesStuck,
     cycles_stopped_out: cyclesStoppedOut,
