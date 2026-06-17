@@ -2,7 +2,8 @@
 // Pure DCA bot cycle simulator — no DB, no API calls.
 // Walks through 1m candles chronologically and simulates
 // the bot's behavior per the rules derived from the live
-// Gate.io bot screenshots.
+// Gate.io bot screenshots and Gate's official Spot Martingale
+// documentation.
 //
 // Capital compounds: profit (or loss) from each closed
 // cycle is added to the capital base used to size the
@@ -11,6 +12,13 @@
 // "max_orders" follows Gate's convention: it's the number of
 // ADDITIONAL DCA orders after the initial order. Total orders
 // per cycle = max_orders + 1.
+//
+// TP price formula matches Gate's documented Spot Martingale
+// behavior exactly:
+//   TP Price = avg_entry * (1 + tp_target% + 0.1%) / (1 - fee_rate)
+// The +0.1% is Gate's fixed safety buffer (not fee-dependent).
+// fee_rate defaults to 0.097% (0.00097), Gate's standard spot
+// maker/taker fee, but can be overridden per BacktestParams.
 //
 // Optional stop_loss_pct: if the price drops to
 // avg_entry * (1 - stop_loss_pct/100), the cycle closes at
@@ -24,6 +32,8 @@
 import type { OhlcvRow, BacktestParams, BacktestCycle, BacktestOrder, BacktestResult } from '@/types'
 
 const MIN_ORDER_SIZE = 1 // USDT — matches exchange minimum order size assumption
+const DEFAULT_FEE_RATE = 0.00097 // 0.097% — Gate spot maker/taker fee
+const TP_SAFETY_BUFFER = 0.001 // Gate's fixed +0.1% buffer in the TP formula
 
 // ── Order 1 size from capital ──────────────────────────────
 // capital = order1 * (1 + mult + mult^2 + ... + mult^(n-1))
@@ -36,11 +46,20 @@ function computeOrder1Size(capital: number, multiplier: number, totalOrders: num
   return capital * (multiplier - 1) / (Math.pow(multiplier, totalOrders) - 1)
 }
 
+// ── TP price from average entry, matching Gate's documented
+//    Spot Martingale formula:
+//    TP Price = avg_entry * (1 + tp_target% + 0.1%) / (1 - fee_rate)
+function computeTpPrice(avgEntry: number, tpTargetPct: number, feeRate: number): number {
+  const pr = (1 + tpTargetPct / 100 + TP_SAFETY_BUFFER) / (1 - feeRate)
+  return avgEntry * pr
+}
+
 export function runBacktest(
   candles: OhlcvRow[],
   params: BacktestParams
 ): BacktestResult {
-  const { deviation, max_orders, tp_target, multiplier, capital, stop_loss_pct } = params
+  const { deviation, max_orders, tp_target, multiplier, capital, stop_loss_pct, fee_rate } = params
+  const feeRate = fee_rate ?? DEFAULT_FEE_RATE
 
   // ── Total orders per cycle = 1 initial + max_orders DCA orders ──
   const totalOrders = max_orders + 1
@@ -87,7 +106,7 @@ export function runBacktest(
     }]
 
     avgEntry = price
-    tpPrice = avgEntry * (1 + tp_target / 100)
+    tpPrice = computeTpPrice(avgEntry, tp_target, feeRate)
     stopLossPrice = stop_loss_pct ? avgEntry * (1 - stop_loss_pct / 100) : null
     nextTriggerPrice = price * (1 - deviation / 100)
 
@@ -125,7 +144,7 @@ export function runBacktest(
       const totalCost = orders.reduce((sum, o) => sum + o.price * o.amount, 0)
       const totalAmount = orders.reduce((sum, o) => sum + o.amount, 0)
       avgEntry = totalCost / totalAmount
-      tpPrice = avgEntry * (1 + tp_target / 100)
+      tpPrice = computeTpPrice(avgEntry, tp_target, feeRate)
       stopLossPrice = stop_loss_pct ? avgEntry * (1 - stop_loss_pct / 100) : null
 
       // next trigger is based on THIS order's fill price

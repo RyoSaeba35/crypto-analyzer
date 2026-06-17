@@ -18,7 +18,7 @@ interface CoinOption {
   limited_data: boolean
 }
 
-// ── Standard params used for the quick per-coin weekly scan ──
+// Standard params used for the quick per-coin weekly scan
 const STANDARD = { deviation: 2.4, max_orders: 15, tp_target: 2, multiplier: 1.3 }
 const STANDARD_TOTAL_ORDERS = STANDARD.max_orders + 1
 const STANDARD_MIN_CAPITAL = (Math.pow(STANDARD.multiplier, STANDARD_TOTAL_ORDERS) - 1) / (STANDARD.multiplier - 1)
@@ -28,7 +28,7 @@ export default function BacktestPage() {
   const [loading, setLoading] = useState(true)
   const [error, setError]     = useState<string | null>(null)
 
-  // ── Form state ──────────────────────────────────────────
+  // Form state
   const [coinId, setCoinId]       = useState('')
   const [dateFrom, setDateFrom]   = useState('')
   const [dateTo, setDateTo]       = useState('')
@@ -38,24 +38,27 @@ export default function BacktestPage() {
   const [multiplier, setMultiplier] = useState(1.3)
   const [capital, setCapital] = useState<number | ''>('')
   const [stopLoss, setStopLoss] = useState<number | ''>('')
+  // stored as a percentage in the UI (e.g. 0.097 for 0.097%), converted to
+  // a decimal fraction on submit. Defaults to Gate's standard spot fee.
+  const [feeRate, setFeeRate] = useState<number | ''>(0.097)
 
-  // ── Run state ────────────────────────────────────────────
+  // Run state
   const [running, setRunning]     = useState(false)
   const [result, setResult]       = useState<BacktestResult | null>(null)
   const [runError, setRunError]   = useState<string | null>(null)
   const [showAllCycles, setShowAllCycles] = useState(false)
 
-  // ── Weekly breakdown state ────────────────────────────────
+  // Weekly breakdown state
   const [weeklyResults, setWeeklyResults] = useState<BacktestResult[] | null>(null)
   const [weeklyRunning, setWeeklyRunning] = useState(false)
   const [weeklyProgress, setWeeklyProgress] = useState(0)
   const [weeklyError, setWeeklyError] = useState<string | null>(null)
 
-  // ── Per-coin quick weekly scan (for dropdown) ─────────────
+  // Per-coin quick weekly scan (for dropdown)
   // undefined/missing = not started yet, null = failed, number = pnl_pct
   const [weeklyScanResults, setWeeklyScanResults] = useState<Record<string, number | null>>({})
 
-  // ── Load available coins ─────────────────────────────────
+  // Load available coins
   useEffect(() => {
     const fetchCoins = async () => {
       try {
@@ -84,8 +87,8 @@ export default function BacktestPage() {
     fetchCoins()
   }, [])
 
-  // ── Progressive scan: run a quick last-7-days backtest at
-  //    standard params for every coin, to populate the dropdown ──
+  // Progressive scan: run a quick last-7-days backtest at
+  // standard params for every coin, to populate the dropdown
   useEffect(() => {
     if (coins.length === 0) return
 
@@ -137,7 +140,7 @@ export default function BacktestPage() {
     return () => { cancelled = true }
   }, [coins])
 
-  // ── When coin changes, reset date range to its bounds ────
+  // When coin changes, reset date range to its bounds
   const handleCoinChange = (newCoinId: string) => {
     setCoinId(newCoinId)
     const coin = coins.find(c => c.coin_id === newCoinId)
@@ -152,7 +155,7 @@ export default function BacktestPage() {
     }
   }
 
-  // ── Format a coin's quick scan result for the dropdown ────
+  // Format a coin's quick scan result for the dropdown
   const formatScanResult = (coinId: string): string => {
     const val = weeklyScanResults[coinId]
     if (val === undefined) return '...'
@@ -160,10 +163,10 @@ export default function BacktestPage() {
     return `${val >= 0 ? '+' : ''}${val.toFixed(1)}%`
   }
 
-  // ── Live minimum capital calculation ─────────────────────
+  // Live minimum capital calculation
   const totalOrders = maxOrders + 1
   const minCapital = multiplier === 1
-    ? totalOrders  // n equal-sized orders, each >= 1 USDT → capital >= n
+    ? totalOrders  // n equal-sized orders, each >= 1 USDT -> capital >= n
     : (Math.pow(multiplier, totalOrders) - 1) / (multiplier - 1)
   const effectiveCapital = capital === '' ? 0 : capital
   const order1Size = multiplier === 1
@@ -171,7 +174,7 @@ export default function BacktestPage() {
     : effectiveCapital * (multiplier - 1) / (Math.pow(multiplier, totalOrders) - 1)
   const capitalTooLow = effectiveCapital < minCapital
 
-  // ── Run the backtest ──────────────────────────────────────
+  // Run the backtest
   const runBacktest = async () => {
     if (capital === '' || capitalTooLow || !coinId) return
 
@@ -194,6 +197,7 @@ export default function BacktestPage() {
           multiplier,
           capital,  // now narrowed to `number` by the guard above
           stop_loss_pct: stopLoss === '' ? undefined : stopLoss,
+          fee_rate: feeRate === '' ? undefined : feeRate / 100,
         }),
       })
 
@@ -212,7 +216,7 @@ export default function BacktestPage() {
     }
   }
 
-  // ── Run the weekly breakdown ───────────────────────────────
+  // Run the weekly breakdown
   const runWeeklyBreakdown = async () => {
     if (capital === '' || capitalTooLow || !coinId || !dateTo) return
 
@@ -244,6 +248,7 @@ export default function BacktestPage() {
             multiplier,
             capital,
             stop_loss_pct: stopLoss === '' ? undefined : stopLoss,
+            fee_rate: feeRate === '' ? undefined : feeRate / 100,
           }),
         })
 
@@ -466,6 +471,30 @@ export default function BacktestPage() {
               <p className="text-xs mt-1 text-gray-500">
                 If set, a cycle closes at a loss once price drops this far below average entry —
                 prevents indefinite accumulation during a sustained downtrend.
+              </p>
+            </div>
+
+            {/* Fee rate */}
+            <div>
+              <label className="block text-sm font-medium text-gray-700 mb-1">
+                Trading fee (%, maker/taker)
+              </label>
+              <input
+                type="number"
+                value={feeRate}
+                placeholder="0.097"
+                step={0.001}
+                min={0}
+                max={5}
+                onChange={(e) => {
+                  const val = e.target.value
+                  setFeeRate(val === '' ? '' : Number(val))
+                }}
+                className="w-full border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 bg-white placeholder-gray-400"
+              />
+              <p className="text-xs mt-1 text-gray-500">
+                Used in the TP price formula (Gate Spot Martingale convention):
+                TP = avg_entry × (1 + TP% + 0.1%) / (1 − fee%).
               </p>
             </div>
 

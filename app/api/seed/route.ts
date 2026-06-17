@@ -13,21 +13,21 @@ import {
 
 export async function GET() {
   try {
-    console.log('Seed started — this will take a while...')
+    console.log('Seed started...')
 
-    // ── Step 1: fetch top 1200 coins ──────────────────────
+    // fetch top 1200 coins
     const coins = await fetchTopCoins(1200)
     console.log(`Got ${coins.length} coins`)
 
-    // ── Step 2: upsert coins ─────────────────────────────
+    // upsert coins
     for (const coin of coins) {
       await upsertCoin(coin)
     }
     console.log(`Upserted ${coins.length} coins`)
 
-    // ── Step 3: fetch 90 days of candles ─────────────────
-    const BATCH_SIZE = 5  // smaller batches for heavy load
-    const BATCH_DELAY = 3000  // 3s between batches
+    // fetch 90 days of candles
+    const BATCH_SIZE = 5
+    const BATCH_DELAY = 3000
     let candleCount = 0
     let errorCount = 0
 
@@ -52,13 +52,13 @@ export async function GET() {
 
     console.log(`Candles saved: ${candleCount}, errors: ${errorCount}`)
 
-    // ── Step 4: delete candles older than 90 days ────────
+    // delete candles older than 90 days
     await pool.query(`
       DELETE FROM ohlcv_data
       WHERE open_time < NOW() - INTERVAL '90 days'
     `)
 
-    // ── Step 5: calculate metrics ─────────────────────────
+    // calculate metrics
     console.log('Calculating metrics...')
     await calculateAllMetrics()
     console.log('Seed complete!')
@@ -79,7 +79,7 @@ export async function GET() {
   }
 }
 
-// ── Fetch 90 days of 5m candles for one coin ─────────────
+// Fetch 90 days of 5m candles for one coin
 async function fetch90Days(
   coin_id: string,
   symbol: string
@@ -89,20 +89,20 @@ async function fetch90Days(
   const TOTAL_CANDLES = DAYS * CANDLES_PER_DAY
   const PER_REQUEST = 1000
 
-  // first check if this coin trades on Binance
+  // check the coin trades on Binance
   const testCandles = await fetchCandles(symbol, '5m', 1)
   const useBinance = testCandles.length > 0
 
   if (!useBinance) {
-    // test Gate.io too
+    // test Gate.io
     const testGate = await fetchCandlesGate(symbol, '5m', 1)
     if (testGate.length === 0) {
-      // coin doesn't trade on either exchange — skip
+      // coin doesn't trade on either exchange then skip
       console.log(`${symbol}: not found on Binance or Gate.io, skipping`)
       return 0
     }
     console.log(`${symbol}: using Gate.io`)
-    // record which exchange this coin uses
+
     await pool.query(
       `UPDATE cryptos SET exchange = 'gate' WHERE coin_id = $1`,
       [coin_id]
@@ -151,7 +151,7 @@ async function fetch90Days(
   return inserted
 }
 
-// ── Calculate metrics (same as cron) ─────────────────────
+// Calculate metrics
 async function calculateAllMetrics() {
   const { rows: coins } = await pool.query(
     'SELECT coin_id FROM cryptos ORDER BY market_cap_rank ASC'
@@ -213,7 +213,7 @@ async function calculateAllMetrics() {
   }
 }
 
-// ── Helpers ───────────────────────────────────────────────
+// Helpers
 async function upsertCoin(coin: CryptoRow) {
   await pool.query(`
     INSERT INTO cryptos (

@@ -1,8 +1,5 @@
 // types/index.ts
-// All shared TypeScript types and interfaces for the project
-
-// ─── Database row types ───────────────────────────────────
-// These match exactly the columns in your PostgreSQL tables
+// TypeScript types and interfaces
 
 export interface CryptoRow {
   coin_id:         string
@@ -43,9 +40,6 @@ export interface ComputedMetricRow {
   last_calculated:      Date
 }
 
-// ─── API response types ───────────────────────────────────
-// What the Next.js API routes send to the frontend
-
 export interface MetricSet {
   interval:            string
   window_days:         number
@@ -70,9 +64,6 @@ export interface ScreenerCrypto {
   score?: number
 }
 
-// ─── Screener filter params ───────────────────────────────
-// What the user sends when clicking Calculate
-
 export interface CalculateParams {
   thresholds: {
     '5m':  number
@@ -85,8 +76,6 @@ export interface CalculateParams {
   recovery_tolerance: number
 }
 
-// ─── Backtester types ─────────────────────────────────────
-
 export interface BacktestParams {
   coin_id:    string
   date_from:  string   // "2026-06-01"
@@ -96,8 +85,8 @@ export interface BacktestParams {
   tp_target:  number   // 2.0
   multiplier: number   // 1.3
   capital:    number   // 250
-  stop_loss_pct?: number   // optional; cycle stops out when
-                           // price <= avg_entry * (1 - stop_loss_pct/100)
+  stop_loss_pct?: number
+  fee_rate?:  number
 }
 
 export interface BacktestOrder {
@@ -113,9 +102,9 @@ export interface BacktestCycle {
   orders:         BacktestOrder[]
   avg_entry:      number
   tp_price:       number
-  close_price:    number | null  // null if stuck
-  profit:         number | null  // null if stuck
-  duration_hours: number | null  // null if stuck
+  close_price:    number | null
+  profit:         number | null
+  duration_hours: number | null
   status:         'closed' | 'open_at_end' | 'stopped_out'
   capital_after:  number | null
 }
@@ -125,7 +114,6 @@ export interface BacktestResult {
   date_from:        string
   date_to:          string
   params:           BacktestParams
-  // summary
   total_pnl:        number
   total_pnl_pct:    number
   capital_start:    number
@@ -135,19 +123,17 @@ export interface BacktestResult {
   cycles_stopped_out: number
   win_rate:         number
   max_capital_used: number
-  max_drawdown:     number       // largest peak-to-trough drop in capital_after, in USDT
-  max_drawdown_pct: number       // same, as % of the peak
-  bot_died:         boolean      // true if order1Size dropped below 1 USDT and the bot had to stop
-  // detail
+  max_drawdown:     number
+  max_drawdown_pct: number
+  bot_died:         boolean
   cycles:           BacktestCycle[]
-  // final bot state
   final_state: {
     is_active:        boolean
     orders_open:      number
     capital_locked:   number
     avg_entry:        number
     tp_price:         number
-    next_buy_prices:  number[]  // next 12 trigger prices
+    next_buy_prices:  number[]
     last_order_time:  string | null
   }
 }
