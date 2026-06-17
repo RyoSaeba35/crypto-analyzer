@@ -326,7 +326,7 @@ export default function BacktestPage() {
                 onChange={(e) => handleCoinChange(e.target.value)}
                 className="w-full border border-gray-300 rounded px-3 py-2 text-sm text-gray-900 bg-white"
               >
-                <optgroup label="Full history (~90 days)">
+                <optgroup label="Full history (~60 days)">
                   {fullDataCoins.map(c => (
                     <option key={c.coin_id} value={c.coin_id}>
                       {c.symbol} — {c.name} ({c.days_span}d)  •  {formatScanResult(c.coin_id)}

@@ -76,7 +76,7 @@ export async function GET(request: NextRequest) {
     //  Step 4: delete candles older than 60 days
     const deleted = await pool.query(`
       DELETE FROM ohlcv_data
-      WHERE open_time < NOW() - INTERVAL '60 days'
+      WHERE open_time < NOW() - INTERVAL '90 days'
     `)
     console.log(`Deleted ${deleted.rowCount} old candles`)
 
@@ -163,7 +163,7 @@ async function fetchMissingCandles(
 
     console.log(`${symbol}: no existing 5m data, running full backfill...`)
     try {
-      return await backfillCandles(coin_id, symbol, 60)
+      return await backfillCandles(coin_id, symbol, 90)
     } catch (err: unknown) {
       if (isDiskFullError(err)) {
         diskFull = true
@@ -243,7 +243,7 @@ async function calculateAllMetrics() {
     'SELECT coin_id FROM cryptos ORDER BY market_cap_rank ASC'
   )
 
-  const WINDOWS = [1, 7, 15, 30, 60]
+  const WINDOWS = [1, 7, 15, 30, 90]
   const INTERVALS = ['5m', '10m', '20m', '30m', '1h']
 
   for (const coin of coins) {
