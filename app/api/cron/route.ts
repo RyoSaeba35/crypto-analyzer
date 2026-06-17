@@ -10,7 +10,8 @@
 import pool from '@/lib/db'
 import { NextRequest } from 'next/server'
 import {
-  fetchTopCoins, fetchCandles, fetchCandlesGate, fetchCandlesKucoin
+  fetchTopCoins, fetchCandles, fetchCandlesGate, fetchCandlesKucoin,
+  backfillCandles90d
 } from '@/lib/exchanges'
 import { calculateScore } from '@/lib/scoring'
 import { CryptoRow, OhlcvRow, ScreenerCrypto, MetricSet } from '@/types'
@@ -19,6 +20,7 @@ import {
   aggregateCandles,
   INTERVAL_GROUPS
 } from '@/lib/analysis'
+
 
 export async function GET(request: NextRequest) {
   // ── Auth check ──────────────────────────────────────────
@@ -142,7 +144,6 @@ async function fetchMissingCandles(
   coin_id: string,
   symbol: string
 ): Promise<number> {
-  // get last candle time AND exchange in one query
   const { rows } = await pool.query(`
     SELECT
       MAX(o.open_time) as last_time,
@@ -154,8 +155,8 @@ async function fetchMissingCandles(
   `, [coin_id])
 
   if (rows.length === 0 || !rows[0].last_time) {
-    console.warn(`No candles found for ${coin_id} — run /api/seed first`)
-    return 0
+    console.log(`${symbol}: no existing 5m data, running full backfill...`)
+    return await backfillCandles90d(coin_id, symbol)
   }
 
   const lastTime = rows[0].last_time as Date

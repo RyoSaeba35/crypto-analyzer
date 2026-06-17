@@ -1,5 +1,6 @@
 // lib/exchanges.ts
 import { CryptoRow, OhlcvRow } from '../types'
+import pool from './db'
 
 const BINANCE_API = 'https://api.binance.com/api/v3'
 const COINGECKO_API = 'https://api.coingecko.com/api/v3'
@@ -188,4 +189,67 @@ export async function fetchCandlesKucoin(
     close:     parseFloat(candle[2]),
     volume:    parseFloat(candle[5]),
   })).reverse()  // KuCoin returns newest-first; we want oldest-first
+}
+
+export async function backfillCandles90d(
+  coin_id: string,
+  symbol: string
+): Promise<number> {
+  const DAYS = 90
+  const CANDLES_PER_DAY = 288
+  const TOTAL_CANDLES = DAYS * CANDLES_PER_DAY
+  const PER_REQUEST = 1000
+
+  const testCandles = await fetchCandles(symbol, '5m', 1)
+  const useBinance = testCandles.length > 0
+
+  if (!useBinance) {
+    const testGate = await fetchCandlesGate(symbol, '5m', 1)
+    if (testGate.length === 0) {
+      console.log(`${symbol}: not found on Binance or Gate.io, skipping`)
+      return 0
+    }
+    await pool.query(`UPDATE cryptos SET exchange = 'gate' WHERE coin_id = $1`, [coin_id])
+  }
+
+  let inserted = 0
+  const now = Date.now()
+  const requests = Math.ceil(TOTAL_CANDLES / PER_REQUEST)
+
+  for (let i = 0; i < requests; i++) {
+    const startTime = now - ((i + 1) * PER_REQUEST * 5 * 60 * 1000)
+
+    const candles = useBinance
+      ? await fetchCandles(symbol, '5m', PER_REQUEST, startTime)
+      : await fetchCandlesGate(symbol, '5m', PER_REQUEST, startTime)
+
+    if (candles.length === 0) continue
+
+    const values: (string | number | Date)[] = []
+    const placeholders: string[] = []
+
+    candles.forEach((candle, idx) => {
+      const base = idx * 8
+      placeholders.push(
+        `($${base+1},$${base+2},$${base+3},$${base+4},$${base+5},$${base+6},$${base+7},$${base+8})`
+      )
+      values.push(
+        coin_id, '5m', candle.open_time,
+        candle.open, candle.high, candle.low,
+        candle.close, candle.volume,
+      )
+    })
+
+    await pool.query(`
+      INSERT INTO ohlcv_data
+        (coin_id, interval, open_time, open, high, low, close, volume)
+      VALUES ${placeholders.join(',')}
+      ON CONFLICT (coin_id, interval, open_time) DO NOTHING
+    `, values)
+
+    inserted += candles.length
+    await sleep(200)
+  }
+
+  return inserted
 }
