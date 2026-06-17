@@ -7,8 +7,6 @@ import { useRouter, useSearchParams } from 'next/navigation'
 import type { ScreenerCrypto as Coin, MetricSet } from '@/types'
 import { calculateScore, scoreColor, trendLabel, isHighRisk } from '@/lib/scoring'
 
-//  Types
-
 interface ApiResponse {
   success: boolean
   count:   number
@@ -16,7 +14,6 @@ interface ApiResponse {
 }
 
 //  Component
-
 function ScreenerContent() {
   const router = useRouter()
   const searchParams = useSearchParams()
@@ -117,7 +114,7 @@ function ScreenerContent() {
     )
   }
 
-  //  Sort coins ─
+  //  Sort coins
   const sortedCoins = [...coins].sort((a, b) => {
     let aVal: number
     let bVal: number
@@ -151,7 +148,6 @@ function ScreenerContent() {
   const visibleCoins = sortedCoins.filter(coin => {
     const volumeOk = showLowVolume || coin.total_volume >= minVolume
     const ageOk = showNewCoins || (coin.metrics['5m_90']?.actual_days ?? 0) >= minAge
-    const netVar90 = coin.metrics['5m_90']?.net_var ?? 0
     const trendOk = !hideDeclining || !isHighRisk(coin)
     return volumeOk && ageOk && trendOk
   })
@@ -553,9 +549,6 @@ function ScreenerContent() {
     </div>
   )
 }
-
-//  Page wrapper ─
-// useSearchParams requires a Suspense boundary in Next.js
 
 export default function ScreenerPage() {
   return (

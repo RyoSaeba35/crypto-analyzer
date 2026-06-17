@@ -35,7 +35,7 @@ export default function BacktestPage() {
   const [maxOrders, setMaxOrders] = useState(15)
   const [tpTarget, setTpTarget]   = useState(2)
   const [multiplier, setMultiplier] = useState(1.3)
-  const [capital, setCapital] = useState<number | ''>('')
+  const [capital, setCapital] = useState<number | ''>(220)
   const [stopLoss, setStopLoss] = useState<number | ''>('')
   const [feeRate, setFeeRate] = useState<number | ''>(0.097)
 

@@ -1,12 +1,10 @@
 // app/api/cryptos/route.ts
 // Serves pre-calculated metrics to the screener frontend
-// Fast — reads from computed_metrics, not raw candles
 
 import pool from '@/lib/db'
 
 export async function GET() {
   try {
-    // join cryptos + computed_metrics to get everything in one query
     const { rows } = await pool.query(`
       SELECT
         c.coin_id,
@@ -31,8 +29,6 @@ export async function GET() {
       ORDER BY c.market_cap_rank ASC
     `)
 
-    // reshape flat rows into nested structure
-    // one object per coin, with metrics nested by interval and window
     const coinsMap = new Map()
 
     for (const row of rows) {
@@ -52,7 +48,6 @@ export async function GET() {
 
       const coin = coinsMap.get(row.coin_id)
 
-      // key = "5m_30" meaning interval 5m, window 30 days
       const key = `${row.interval}_${row.window_days}`
       coin.metrics[key] = {
         interval:            row.interval,

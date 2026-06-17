@@ -4,9 +4,9 @@
 
 import type { OhlcvRow, BacktestParams, BacktestCycle, BacktestOrder, BacktestResult } from '@/types'
 
-const MIN_ORDER_SIZE = 1 // minimum order size
+const MIN_ORDER_SIZE = 1
 const DEFAULT_FEE_RATE = 0.00097
-const TP_SAFETY_BUFFER = 0.001 // Gate's fixed +0.1% buffer
+const TP_SAFETY_BUFFER = 0.001
 
 //  Order 1 size from capital
 // capital = order1 * (1 + mult + mult^2 + ... + mult^(n-1))
@@ -19,9 +19,8 @@ function computeOrder1Size(capital: number, multiplier: number, totalOrders: num
   return capital * (multiplier - 1) / (Math.pow(multiplier, totalOrders) - 1)
 }
 
-//  TP price from average entry, matching Gate's documented
-//    Spot Martingale formula:
-//    TP Price = avg_entry * (1 + tp_target% + 0.1%) / (1 - fee_rate)
+//  TP price from average entry
+//  TP Price = avg_entry * (1 + tp_target% + 0.1%) / (1 - fee_rate)
 function computeTpPrice(avgEntry: number, tpTargetPct: number, feeRate: number): number {
   const pr = (1 + tpTargetPct / 100 + TP_SAFETY_BUFFER) / (1 - feeRate)
   return avgEntry * pr
@@ -34,12 +33,8 @@ export function runBacktest(
   const { deviation, max_orders, tp_target, multiplier, capital, stop_loss_pct, fee_rate } = params
   const feeRate = fee_rate ?? DEFAULT_FEE_RATE
 
-  //  Total orders per cycle = 1 initial + max_orders DCA orders
   const totalOrders = max_orders + 1
 
-  //  Compounding capital state
-  // order1Size is recalculated at the start of every cycle
-  // from currentCapital, so profits/losses feed forward.
   let currentCapital = capital
   let order1Size = computeOrder1Size(currentCapital, multiplier, totalOrders)
 
@@ -56,8 +51,6 @@ export function runBacktest(
   let cycleStartTime = ''
   let botDied = false
 
-  // start a new cycle, recomputing order1Size from currentCapital.
-  // returns false if the bot can no longer afford a valid first order.
   function startNewCycle(price: number, timestamp: string): boolean {
     order1Size = computeOrder1Size(currentCapital, multiplier, totalOrders)
 
@@ -97,7 +90,7 @@ export function runBacktest(
 
     const candle = candles[idx]
 
-    //  Step 1: fill any pending DCA orders (price moved down)
+    //  fill any pending DCA orders (price moved down)
     while (
       orders.length < totalOrders &&
       candle.low <= nextTriggerPrice
@@ -120,11 +113,10 @@ export function runBacktest(
       tpPrice = computeTpPrice(avgEntry, tp_target, feeRate)
       stopLossPrice = stop_loss_pct ? avgEntry * (1 - stop_loss_pct / 100) : null
 
-      // next trigger is based on THIS order's fill price
       nextTriggerPrice = fillPrice * (1 - deviation / 100)
     }
 
-    //  Step 2a: check stop-loss (price crashed below threshold)
+    //  check stop-loss
     if (stopLossPrice !== null && candle.low <= stopLossPrice) {
       const totalAmount = orders.reduce((sum, o) => sum + o.amount, 0)
       const totalCost   = orders.reduce((sum, o) => sum + o.price * o.amount, 0)
@@ -133,7 +125,6 @@ export function runBacktest(
       const durationHours =
         (candle.open_time.getTime() - new Date(cycleStartTime).getTime()) / (1000 * 60 * 60)
 
-      //  Compound: loss feeds into capital for next cycle
       currentCapital += profit
 
       cycles.push({
@@ -153,11 +144,11 @@ export function runBacktest(
 
       const started = startNewCycle(candle.close, candle.open_time.toISOString())
       if (!started) {
-        orders = [] // no open position when the bot dies
+        orders = []
         break
       }
 
-    //  Step 2b: check take-profit (price moved up)
+    //  check take-profit (price moved up)
     } else if (candle.high >= tpPrice) {
       const totalAmount = orders.reduce((sum, o) => sum + o.amount, 0)
       const totalCost   = orders.reduce((sum, o) => sum + o.price * o.amount, 0)
@@ -166,7 +157,6 @@ export function runBacktest(
       const durationHours =
         (candle.open_time.getTime() - new Date(cycleStartTime).getTime()) / (1000 * 60 * 60)
 
-      //  Compound: profit feeds into capital for next cycle
       currentCapital += profit
 
       cycles.push({
@@ -184,9 +174,6 @@ export function runBacktest(
 
       cycleNum++
 
-      // start next cycle at this candle's close price —
-      // the bot sold (TP) sometime during this minute, and
-      // re-buys at the price by the end of that same minute
       const started = startNewCycle(candle.close, candle.open_time.toISOString())
       if (!started) {
         orders = []

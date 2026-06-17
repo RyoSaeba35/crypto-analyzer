@@ -1,11 +1,6 @@
 // app/api/cron/route.ts
 // Runs daily — fetches missing candles since last DB entry
 // Self-healing — works even if cron missed several days
-//
-// Also maintains 1m candle data (ohlcv_1m) for the top 15
-// coins by score, used by the backtester. New entrants to
-// the top 15 get a full 60-day backfill; existing ones get
-// a cheap incremental top-up. Data is trimmed to 60 days.
 
 import pool from '@/lib/db'
 import { NextRequest } from 'next/server'
@@ -24,7 +19,7 @@ import {
 let diskFull = false
 
 export async function GET(request: NextRequest) {
-  //  Auth check
+  //  Authentification check
   const secret = request.nextUrl.searchParams.get('secret')
   if (secret !== process.env.CRON_SECRET) {
     return Response.json({ success: false, error: 'Unauthorized' }, { status: 401 })
@@ -33,19 +28,18 @@ export async function GET(request: NextRequest) {
   try {
     console.log('Daily cron job started...')
 
-    //  Step 1: fetch top 1200 coins─
+    // fetch top 1200 coins
     console.log('Fetching top coins from CoinGecko...')
     const coins = await fetchTopCoins(1200)
     console.log(`Got ${coins.length} coins`)
 
-    //  Step 2: upsert coins
+    //  upsert coins
     for (const coin of coins) {
       await upsertCoin(coin)
     }
     console.log(`Upserted ${coins.length} coins`)
 
-    //  Step 3: fetch missing candles for each coin
-    // processes in batches of 10 to respect Binance rate limits
+    // fetch missing candles for each coin
     const BATCH_SIZE = 10
     const BATCH_DELAY = 2000
     let candleCount = 0
@@ -73,19 +67,19 @@ export async function GET(request: NextRequest) {
 
     console.log(`Candles saved: ${candleCount}, errors: ${errorCount}`)
 
-    //  Step 4: delete candles older than 60 days
+    //  delete candles older than 60 days
     const deleted = await pool.query(`
       DELETE FROM ohlcv_data
       WHERE open_time < NOW() - INTERVAL '90 days'
     `)
     console.log(`Deleted ${deleted.rowCount} old candles`)
 
-    //  Step 5: recalculate all metrics─
+    // recalculate all metrics
     console.log('Calculating metrics...')
     await calculateAllMetrics()
     console.log('Metrics calculated')
 
-    //  Step 6: update 1m candles for top 15 coins ─
+    // update 1m candles for top 15 coins
     console.log('Updating 1m candles for top 15...')
     let new1mCandles = 0
     let new1mErrors = 0
@@ -140,7 +134,6 @@ export async function GET(request: NextRequest) {
   }
 }
 
-//  Fetch all candles since last DB entry
 async function fetchMissingCandles(
   coin_id: string,
   symbol: string
@@ -237,7 +230,7 @@ async function fetchMissingCandles(
   return inserted
 }
 
-//  Calculate metrics for all coins─
+//  Calculate metrics for all coins
 async function calculateAllMetrics() {
   const { rows: coins } = await pool.query(
     'SELECT coin_id FROM cryptos ORDER BY market_cap_rank ASC'
@@ -247,7 +240,6 @@ async function calculateAllMetrics() {
   const INTERVALS = ['5m', '10m', '20m', '30m', '1h']
 
   for (const coin of coins) {
-    // fetch all 5m candles for this coin
     const { rows: candles } = await pool.query(`
       SELECT * FROM ohlcv_data
       WHERE coin_id = $1 AND interval = '5m'
@@ -257,12 +249,10 @@ async function calculateAllMetrics() {
     if (candles.length === 0) continue
 
     for (const intervalName of INTERVALS) {
-      // aggregate 5m candles into target interval
       const groupSize = INTERVAL_GROUPS[intervalName]
       const aggregated = aggregateCandles(candles, groupSize)
 
       for (const windowDays of WINDOWS) {
-        // filter to only the window period
         const cutoff = new Date()
         cutoff.setDate(cutoff.getDate() - windowDays)
         const windowCandles = aggregated.filter(c => c.open_time >= cutoff)
@@ -326,9 +316,7 @@ async function upsertCoin(coin: CryptoRow) {
   ])
 }
 
-//  Get current top 15 coins by score─
-// Same shape/scoring as /api/cryptos + lib/scoring, used to
-// decide which coins get 1m data maintained in ohlcv_1m.
+//  Get current top 15 coins by score
 async function getTop15Coins(): Promise<(ScreenerCrypto & { exchange: string })[]> {
   const { rows } = await pool.query(`
     SELECT
@@ -381,8 +369,6 @@ async function getTop15Coins(): Promise<(ScreenerCrypto & { exchange: string })[
 }
 
 //  Incremental 1m update (small, daily top-up)
-// Tries KuCoin first (often deeper/cleaner history), falls
-// back to the coin's existing exchange (gate/binance).
 async function fetchMissing1mCandles(
   coin_id: string,
   symbol: string,
@@ -423,7 +409,7 @@ async function fetchMissing1mCandles(
   return inserted
 }
 
-//  Full 60-day backfill (for new top-15 entrants)
+//  Full 60-day backfill
 async function fetch60Days1m(
   coin_id: string,
   symbol: string,
@@ -484,7 +470,6 @@ async function insert1mCandles(coin_id: string, candles: OhlcvRow[]): Promise<nu
   return candles.length
 }
 
-//  Helper: sleep
 function sleep(ms: number): Promise<void> {
   return new Promise(resolve => setTimeout(resolve, ms))
 }

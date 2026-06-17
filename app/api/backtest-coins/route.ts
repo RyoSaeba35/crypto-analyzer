@@ -1,7 +1,4 @@
 // app/api/backtest-coins/route.ts
-// Returns the coins available for backtesting (those with
-// 1m data in ohlcv_1m), along with each coin's available
-// date range and a flag for "limited data" (< 30 days).
 
 import pool from '@/lib/db'
 
@@ -34,7 +31,7 @@ export async function GET() {
         latest:       latest.toISOString(),
         days_span:    Math.round(daysSpan * 10) / 10,
         candle_count: Number(row.candle_count),
-        limited_data: daysSpan < 30,  // flag for UI warning
+        limited_data: daysSpan < 30,
       }
     })
 

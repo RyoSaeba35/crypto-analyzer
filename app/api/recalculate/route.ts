@@ -1,6 +1,5 @@
 // app/api/recalculate/route.ts
 // Recalculates computed_metrics from existing ohlcv_data
-// No API calls — fast (~20-25 min for 689 coins)
 
 import pool from '@/lib/db'
 import {
